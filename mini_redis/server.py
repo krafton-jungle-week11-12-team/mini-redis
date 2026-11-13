@@ -59,7 +59,7 @@ def _raise_interrupt(signum, frame):
     raise KeyboardInterrupt
 
 
-def run(host="127.0.0.1", port=6379, verbose=False):
+def run(host="127.0.0.1", port=6380, verbose=False):
     signal.signal(signal.SIGTERM, _raise_interrupt)  # kill, systemd 종료도 Ctrl+C처럼 처리
     try:
         server = HTTPServer((host, port), CommandHandler)  # 단일 스레드

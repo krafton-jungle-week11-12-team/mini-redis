@@ -8,7 +8,7 @@ from mini_redis.server import run
 def main():
     parser = argparse.ArgumentParser(description="mini-redis 서버")
     parser.add_argument("--host", default="127.0.0.1", help="외부 접속을 받으려면 0.0.0.0")
-    parser.add_argument("--port", type=int, default=6379)
+    parser.add_argument("--port", type=int, default=6380, help="기본 6380. 진짜 Redis(6379), macOS AirPlay(7000)와 겹치지 않게 골랐어요")
     parser.add_argument("--verbose", action="store_true", help="요청 로그 출력")
     args = parser.parse_args()
     run(args.host, args.port, args.verbose)
