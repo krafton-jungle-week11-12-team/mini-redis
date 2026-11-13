@@ -1,0 +1,41 @@
+title: "[회의록] YYYY-MM-DD "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        회의를 클로바노트로 녹음하고, AI가 정리한 내용을 올려요.
+        관련 이슈나 PR은 `#번호`로 적어 두면 AI가 작업할 때 이 회의록을 컨텍스트로 읽어요.
+  - type: input
+    id: attendees
+    attributes:
+      label: 참석자
+      placeholder: 홍길동, 김철수
+    validations:
+      required: true
+  - type: textarea
+    id: agenda
+    attributes:
+      label: 안건
+      placeholder: |
+        - Phase 1 해시 테이블 충돌 처리 방식
+    validations:
+      required: true
+  - type: textarea
+    id: decisions
+    attributes:
+      label: 결정 사항
+      placeholder: |
+        - 체이닝 방식으로 충돌을 처리한다
+    validations:
+      required: true
+  - type: textarea
+    id: todos
+    attributes:
+      label: 할 일
+      placeholder: |
+        - [ ] 설계 문서 작성 (@담당자, #4)
+  - type: textarea
+    id: related
+    attributes:
+      label: 관련 이슈 · PR
+      placeholder: "#2, #4"

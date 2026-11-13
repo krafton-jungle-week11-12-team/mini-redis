@@ -1,0 +1,29 @@
+title: "[학습] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        각자 학습한 내용을 올려요. **이해한 내용만** 올리는 것이 규칙이에요.
+  - type: input
+    id: topic
+    attributes:
+      label: 주제
+      placeholder: 해시 테이블 충돌 해결 (체이닝 vs 오픈 어드레싱)
+    validations:
+      required: true
+  - type: textarea
+    id: content
+    attributes:
+      label: 이해한 내용
+      description: 내 말로 설명할 수 있는 내용만 적어요.
+    validations:
+      required: true
+  - type: textarea
+    id: application
+    attributes:
+      label: 우리 프로젝트에 적용할 점
+      placeholder: "Phase 1 설계(#4)에서 리사이즈 기준을 load factor 0.75로 두면 좋겠어요."
+  - type: textarea
+    id: references
+    attributes:
+      label: 참고 자료
