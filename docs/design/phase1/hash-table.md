@@ -82,6 +82,8 @@ class Bucket:
 
 ### HashTable
 
+key-value를 저장하는 해시 테이블이에요. (R-05)
+
 | 필드 | 타입 | 뜻 |
 | --- | --- | --- |
 | `capacity` | `int` | 버킷 수예요. 처음에는 8이고(R-06), 항상 2의 거듭제곱이에요. |
@@ -307,7 +309,7 @@ SET에서 value로 `null`을 받지 않으므로, GET의 `null`은 항상 "없�
 2. `(size + tombstones + 1) / capacity > 0.75`이면 테이블을 2배로 확장해요. (R-07) 이미 `MAX_CAPACITY`이면 `STORE_FULL` 오류를 반환하고 끝내요. 기존 key를 덮어쓰는 SET도 여기서 막혀요.
 3. `_probe(kiwi)`를 실행해서 `(found, insert_at)`을 받아요. 확장 뒤에는 홈 버킷이 바뀌므로, 반드시 2번 다음에 실행해요.
 4. `found`가 있으면 → 그 버킷을 `fill`로 덮어쓰고 6번으로 가요. value와 `value_len`이 함께 바뀌어요. (R-14)
-5. `found`가 없으면 → `insert_at` 버킷을 `fill`로 채워서 `OCCUPIED`로 바꿔요. 그 자리가 `TOMBSTONE`이었으면 `tombstones -= 1`을 해요. 마지막으로 `size += 1`을 해요.
+5. `found`가 없으면 → `insert_at` 버킷을 `fill`로 채워서 `OCCUPIED`로 바꿔요. 그 자리가 `TOMBSTONE`이었으면 `tombstones -= 1`을 해요. 마지막으로 `size += 1`을 해요. (R-13)
 6. `OK`를 반환해요.
 
 ### GET (`GET kiwi`)
