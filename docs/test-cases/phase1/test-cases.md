@@ -6,8 +6,8 @@
 
 ## 한눈에 보기
 
-- 전체 55개 중 **작성 완료 47개**, **범위 밖 8개**예요.
-- 범위 밖은 이번 테스트에서 다루지 않는 케이스예요. 메모리 한계(MEM), 정상 경로로 만들 수 없는 상태(WRP-03, DEL-04), hash mock으로 대체하는 해시 함수 세부 동작(HSH-01 ~ HSH-03)이 여기에 속해요.
+- 전체 55개 중 **작성 완료 48개**, **범위 밖 7개**예요.
+- 범위 밖은 이번 테스트에서 다루지 않는 케이스예요. 메모리 한계(MEM), 정상 경로로 만들 수 없는 상태(WRP-03), hash mock으로 대체하는 해시 함수 세부 동작(HSH-01 ~ HSH-03)이 여기에 속해요.
 
 ## 표기법
 
@@ -22,6 +22,7 @@
 | `(hash H)` | 그 key의 해시 인덱스를 H로 고정해요. | `probe key2 (hash 1)` |
 | `A → B` | A를 실행한 뒤 B를 실행해요. | `fill 6 → del key1` |
 | `probe key` | `_probe(key)`를 부르고 `(found, insert_at)`을 확인해요. 찾지 못하면 `found`는 `None`이에요. | `(None, 2)` |
+| `CODE (status)` | 오류 응답의 `error.code`와 HTTP 상태 코드예요. 코드 목록은 [해시 테이블 설계의 오류 코드](../../design/phase1/hash-table.md#오류-코드)를 따라요. | `WRONG_ARGS (400)` |
 | `tombstones`, `dbsize`, `capacity` | 각각 TOMBSTONE 버킷 수, OCCUPIED 버킷 수, 버킷 전체 칸 수예요. | `tombstones == 1` |
 
 ## 확장/적재율
@@ -40,14 +41,14 @@
 | ID | 시나리오 | 준비 (Given) | 실행 (When) | 기대 결과 (Then) | 상태 | 비고 |
 | --- | --- | --- | --- | --- | --- | --- |
 | MEM-01 | 한계에 닿으면 확장 불가 오류 반환 | — | — | 확장 불가 오류 | 범위 밖 |  |
-| MEM-02 | 한계 + 적재율 75% 도달 시 새 key 거부 | capacity == MAX_CAP 상태에서 MAX_CAP × 0.75개 저장 | set 새 key | error | 범위 밖 | tombstone도 사용량에 포함 |
+| MEM-02 | 한계 + 적재율 75% 도달 시 새 key 거부 | capacity == MAX_CAP 상태에서 MAX_CAP × 0.75개 저장 | set 새 key | STORE_FULL (507) | 범위 밖 | tombstone도 사용량에 포함 |
 | MEM-03 | 버킷 최대 크기는 1<<20 | — | — | — | 범위 밖 |  |
 
 ## 탐사(probe)
 
 | ID | 시나리오 | 준비 (Given) | 실행 (When) | 기대 결과 (Then) | 상태 | 비고 |
 | --- | --- | --- | --- | --- | --- | --- |
-| PRB-01 | 홈 버킷에서 탐사 시작 | set key1 val1 (hash 3) | probe key1 | (3, 3) | 작성 완료 | 원문 todo → 새로 작성 |
+| PRB-01 | 홈 버킷에서 탐사 시작 | set key1 val1 (hash 3) | probe key1 | (3, 3) | 작성 완료 |  |
 | PRB-02 | EMPTY 버킷에서 멈춤 | col 1 (key1@1) | probe key2 (hash 1) | (None, 2) | 작성 완료 | EMPTY면 멈추고, OCCUPIED·TOMBSTONE이면 다음 칸으로 |
 | PRB-03 | tombstone을 지나 key를 찾음 | col 3 → del key2 | probe key3 | (3, 3) | 작성 완료 |  |
 | PRB-04 | tombstone이 여러 개면 첫 번째를 삽입 위치로 기억 | col 3 → del key2 → del key3 | probe key3 | (None, 2) | 작성 완료 |  |
@@ -57,28 +58,28 @@
 | ID | 시나리오 | 준비 (Given) | 실행 (When) | 기대 결과 (Then) | 상태 | 비고 |
 | --- | --- | --- | --- | --- | --- | --- |
 | WRP-01 | 마지막 칸 다음은 0번 | hash 6부터 col 3 (key1@6, key2@7, key3@0) | probe key4 (hash 6) | (None, 1) | 작성 완료 | 홈 버킷이 마지막 칸일 때 충돌하는 경우도 여기서 커버 |
-| WRP-02 | 0번을 넘어가서 key를 찾음 (한 바퀴까지 탐사) | hash 6부터 col 4 | probe key4 | (1, 1) | 작성 완료 | 원문 기대값 'key (6,6)'의 뜻이 불분명해서 제안값으로 넣음 |
+| WRP-02 | 0번을 넘어가서 key를 찾음 (한 바퀴까지 탐사) | hash 6부터 col 4 | probe key4 | (1, 1) | 작성 완료 | key4는 홈 버킷 6부터 7, 0을 지나 1번에 저장되므로 (1, 1)이에요. |
 | WRP-03 | 한 바퀴를 돌아도 EMPTY가 없으면 tombstone 반환 | — | — | — | 범위 밖 | 적재율 75% 제한 때문에 정상 경로에선 EMPTY가 항상 남음. 테스트하려면 buckets를 직접 조작해야 함 |
 
 ## 입력 검증
 
 | ID | 시나리오 | 준비 (Given) | 실행 (When) | 기대 결과 (Then) | 상태 | 비고 |
 | --- | --- | --- | --- | --- | --- | --- |
-| VAL-01 | set 인자 없음 | — | set | error | 작성 완료 |  |
-| VAL-02 | set 인자 초과 | — | set key1 val1 val2 | error | 작성 완료 |  |
-| VAL-03 | set에 key만 줌 | — | set key1 | error | 작성 완료 |  |
-| VAL-04 | get 인자 없음 | — | get | error | 작성 완료 |  |
-| VAL-05 | get 인자 초과 | — | get key1 key2 | error | 작성 완료 |  |
-| VAL-06 | key가 NULL | — | set null val1 | error | 작성 완료 |  |
-| VAL-07 | value가 NULL | — | set key1 null | error | 작성 완료 |  |
+| VAL-01 | set 인자 없음 | — | set | WRONG_ARGS (400) | 작성 완료 |  |
+| VAL-02 | set 인자 초과 | — | set key1 val1 val2 | WRONG_ARGS (400) | 작성 완료 |  |
+| VAL-03 | set에 key만 줌 | — | set key1 | WRONG_ARGS (400) | 작성 완료 |  |
+| VAL-04 | get 인자 없음 | — | get | WRONG_ARGS (400) | 작성 완료 |  |
+| VAL-05 | get 인자 초과 | — | get key1 key2 | WRONG_ARGS (400) | 작성 완료 |  |
+| VAL-06 | key가 NULL | — | set null val1 | WRONG_TYPE (400) | 작성 완료 | R-25. `null`도 문자열이 아니므로 WRONG_TYPE |
+| VAL-07 | value가 NULL | — | set key1 null | WRONG_TYPE (400) | 작성 완료 | R-11, R-25 |
 | VAL-08 | key 99byte까지 허용 | — | set (99byte key) val1 | OK, get ⇒ val1 | 작성 완료 | R-23. 경계값 |
-| VAL-09 | key 99byte 초과 거부 | — | set (100byte key) val1 | KEY_TOO_LONG | 작성 완료 | R-23 |
+| VAL-09 | key 99byte 초과 거부 | — | set (100byte key) val1 | KEY_TOO_LONG (400) | 작성 완료 | R-23 |
 | VAL-10 | 요청 본문 1MB까지 허용 | — | 본문이 정확히 1MB가 되도록 value 크기를 맞춘 set 요청 | OK | 작성 완료 | R-24. server.py에서 검사하므로 서버 테스트로 작성. value는 JSON에 감싸져 1MB보다 조금 작음 |
 | VAL-11 | 요청 본문 1MB 초과 거부 | — | 본문이 1MB + 1byte인 set 요청 | VALUE_TOO_LARGE (413) | 작성 완료 | R-24. 서버 테스트 |
-| VAL-12 | 길이는 글자 수가 아니라 byte로 셈 (초과) | — | set ("가"×34, 34글자 = 102byte) val1 | error | 작성 완료 |  |
+| VAL-12 | 길이는 글자 수가 아니라 byte로 셈 (초과) | — | set ("가"×34, 34글자 = 102byte) val1 | KEY_TOO_LONG (400) | 작성 완료 | R-23 |
 | VAL-13 | 길이는 byte로 셈 (허용) | — | set ("가"×33, 99byte) val1 | OK | 작성 완료 |  |
-| VAL-14 | key가 문자열이 아님 (숫자) | — | set 123 val1 | WRONG_TYPE | 작성 완료 | R-25 |
-| VAL-15 | value가 문자열이 아님 (객체) | — | set key1 {"a": 1} | WRONG_TYPE | 작성 완료 | R-25 |
+| VAL-14 | key가 문자열이 아님 (숫자) | — | set 123 val1 | WRONG_TYPE (400) | 작성 완료 | R-25 |
+| VAL-15 | value가 문자열이 아님 (객체) | — | set key1 {"a": 1} | WRONG_TYPE (400) | 작성 완료 | R-25 |
 
 ## SET
 
@@ -106,7 +107,7 @@
 | DEL-01 | 없는 key 삭제 | — | del key1 | 0 | 작성 완료 |  |
 | DEL-02 | 삭제한 자리는 TOMBSTONE이 됨 | fill 2 | del key1 | tombstones == 1, dbsize == 1 | 작성 완료 |  |
 | DEL-03 | 삭제한 개수를 반환 | set key1 val1 | del key1 | 1 | 작성 완료 |  |
-| DEL-04 | 같은 key를 두 번 삭제 | fill 1 → del key1 | del key1 | 0, tombstones == 1 | 범위 밖 |  |
+| DEL-04 | 같은 key를 두 번 삭제 | fill 1 → del key1 | del key1 | 0, tombstones == 1 | 작성 완료 |  |
 
 ## EXISTS
 
