@@ -79,7 +79,7 @@ curl 127.0.0.1:6380/health
 | `INVALID_REQUEST` | 400 | JSON이 아니거나, `command`가 없거나, `args`가 배열이 아닐 때 |
 | `UNKNOWN_COMMAND` | 400 | 지원하지 않는 명령어일 때 |
 | `WRONG_ARGS` | 400 | 인자 개수가 맞지 않을 때 |
-| `VALUE_TOO_LARGE` | 413 | 요청 본문이 1.1MB를 넘을 때 |
+| `VALUE_TOO_LARGE` | 413 | 요청 본문이 1MB를 넘을 때 |
 | `NOT_FOUND` | 404 | `/command`, `/health`가 아닌 경로일 때 |
 
 ## 다른 PC에서 접속하기

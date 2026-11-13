@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from mini_redis.dispatcher import execute, error_response
 
-MAX_BODY_BYTES = 1_100_000  # value 최대 1MB(R-24) + JSON 여유분
+MAX_BODY_BYTES = 1024 * 1024  # 요청 본문 최대 1MB (R-24)
 
 
 class CommandHandler(BaseHTTPRequestHandler):
