@@ -263,7 +263,7 @@ def _resize(self, new_capacity):
 
 ## 입력값 검사
 
-`dispatcher.py`에서 저장소를 보기 전에 검사해요.
+`dispatcher.py`의 `execute`에서 저장소를 보기 전에 한 번에 검사해요. 자세한 위치는 [dispatcher 연결](#dispatcher-연결)을 참고해요.
 
 | 조건 | 응답 | 근거 |
 | --- | --- | --- |
@@ -348,5 +348,58 @@ SET에서 value로 `null`을 받지 않으므로, GET의 `null`은 항상 "없�
    | `EXISTS` | 1 | `1` 또는 `0` |
    | `DBSIZE` | 0 | 저장된 key 개수 |
 
-2. 명령어 함수가 입력값 오류를 반환할 수 있게, 명령어 함수는 `(HTTP 상태 코드, 응답 dict)`를 반환해요. `execute`의 마지막 줄 `return 200, func(args)`를 `return func(args)`로 바꾸고, `cmd_ping`도 `(200, ok_response("PONG"))`을 반환하게 고쳐요.
-3. SET에서 `StoreFullError`가 나면 오류 응답 `STORE_FULL`로 바꿔요.
+2. 입력값 검사는 명령어 함수가 아니라 `execute`에서 한 번에 해요. 인자 개수를 확인한 바로 다음에 두 가지를 추가해요.
+   - 모든 인자가 문자열인지 확인해요. 아니면 `WRONG_TYPE`을 반환해요. (R-11, R-25)
+   - 첫 번째 인자(key)가 99byte 이하인지 확인해요. 넘으면 `KEY_TOO_LONG`을 반환해요. (R-23)
+3. 명령어 함수를 실행할 때 `StoreFullError`를 받아서 `STORE_FULL` 오류로 바꿔요.
+
+명령어 함수는 검사가 끝난 값만 받으므로 저장소를 부르고 결과를 담기만 해요. 그래서 기존 `cmd_ping`과 `return 200, func(args)`는 그대로 둬요.
+
+```python
+from mini_redis.store import HashTable, StoreFullError
+
+store = HashTable()
+
+
+def cmd_set(args):
+    store.set(args[0], args[1])
+    return ok_response("OK")
+
+
+def cmd_get(args):
+    return ok_response(store.get(args[0]))      # 없으면 None → null
+
+
+def cmd_del(args):
+    return ok_response(store.delete(args[0]))   # 1 또는 0
+
+
+def cmd_exists(args):
+    return ok_response(store.exists(args[0]))   # 1 또는 0
+
+
+def cmd_dbsize(args):
+    return ok_response(store.size)
+
+
+def execute(command, args):
+    name = command.upper()
+    if name not in COMMANDS:                                    # 1. 명령어
+        return 400, error_response("UNKNOWN_COMMAND", f"{command}는 지원하지 않는 명령어예요")
+
+    func, arity = COMMANDS[name]
+    if len(args) != arity:                                      # 2. 인자 개수
+        return 400, error_response("WRONG_ARGS", f"{name}은 인자 {arity}개가 필요해요")
+
+    if any(not isinstance(a, str) for a in args):               # 3. 문자열 (R-11, R-25)
+        return 400, error_response("WRONG_TYPE", "key와 value는 문자열이어야 해요")
+    if args and len(args[0].encode("utf-8")) > MAX_KEY_LEN:     # 4. key 길이 (R-23)
+        return 400, error_response("KEY_TOO_LONG", "key는 최대 99byte예요")
+
+    try:
+        return 200, func(args)                                  # 5. 실행
+    except StoreFullError:
+        return 507, error_response("STORE_FULL", "저장소가 가득 찼어요")
+```
+
+이 방식은 Phase 1 명령어가 모두 "인자는 전부 문자열이고, 인자가 있으면 첫 번째가 key"라는 규칙을 따른다는 점에 기대요. PING과 DBSIZE는 인자가 없어서 3, 4번 검사를 그냥 통과해요. 나중에 `EXPIRE kiwi 30`처럼 숫자 인자를 받는 명령어가 생기면, 그 명령어만 따로 검사하도록 바꿔야 해요.
