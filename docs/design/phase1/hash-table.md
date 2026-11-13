@@ -221,12 +221,14 @@ SET에서 새 key를 넣기 **전에** 확인해요. (R-07)
 | --- | --- |
 | 적재율 0.75 이하 | 그대로 SET해요. |
 | 적재율 0.75 초과, `capacity < MAX_CAPACITY` | 버킷을 2배로 확장한 뒤 SET해요. 오류는 나지 않아요. |
-| 적재율 0.75 초과, `capacity == MAX_CAPACITY` | 더 확장할 수 없어서 `STORE_FULL` 오류를 반환하고 SET하지 않아요. |
+| 적재율 0.75 초과, `capacity == MAX_CAPACITY` | 더 확장할 수 없어서 `STORE_FULL` 오류를 반환하고 SET하지 않아요. **기존 key를 덮어쓰는 SET도 막혀요.** |
 
 ```
 버킷 8개, key 6개         → SET → 7/8 > 0.75 → 버킷 16개로 확장 → 저장 성공
 버킷 1,048,576개, key 약 78만 개 → SET → 0.75 초과 → 더 확장할 수 없음 → STORE_FULL
 ```
+
+최대 크기에서는 덮어쓰기도 막아요. 확장 조건은 `_probe`보다 먼저 `+1`로 확인하므로, 이 시점에는 key가 이미 있는지 알 수 없어요. 덮어쓰기만 허용하려면 최대 크기일 때만 `_probe`를 먼저 부르는 분기가 필요한데, 저장소가 가득 찬 드문 상황을 위해 흐름을 복잡하게 만들지 않기로 했어요.
 
 확장 조건을 만족했는데 `capacity`가 이미 `MAX_CAPACITY`이면, 확장하지 않고 `StoreFullError`를 던져요. `dispatcher.py`가 이 예외를 받아 `STORE_FULL` 오류로 응답해요. 실제 Redis가 `maxmemory`를 넘었을 때 OOM 오류를 내는 것과 같은 방식이에요.
 
@@ -280,12 +282,29 @@ def _resize(self, new_capacity):
 
 SET에서 value로 `null`을 받지 않으므로, GET의 `null`은 항상 "없음"이라는 뜻만 가져요.
 
+## 오류 코드
+
+서버가 반환하는 오류 코드를 모두 모았어요. 오류 응답은 항상 `{"ok": false, "result": null, "error": {"code": ..., "message": ...}}` 형식이에요. (R-03)
+
+| 코드 | HTTP 상태 | 언제 | 검사 위치 | 근거 | 상태 |
+| --- | --- | --- | --- | --- | --- |
+| `NOT_FOUND` | 404 | `/command`, `/health`가 아닌 경로로 요청했을 때 | `server.py` | R-04 | 구현됨 |
+| `VALUE_TOO_LARGE` | 413 | 요청 본문이 1MB를 넘을 때 | `server.py` | R-24 | 구현됨 |
+| `INVALID_REQUEST` | 400 | JSON이 아니거나, `command`가 문자열이 아니거나, `args`가 배열이 아닐 때 | `server.py` | R-04 | 구현됨 |
+| `UNKNOWN_COMMAND` | 400 | 지원하지 않는 명령어일 때 | `dispatcher.py` | R-04 | 구현됨 |
+| `WRONG_ARGS` | 400 | 인자 개수가 맞지 않을 때 | `dispatcher.py` | R-04 | 구현됨 |
+| `WRONG_TYPE` | 400 | key나 value가 문자열이 아닐 때 (`null` 포함) | `dispatcher.py` | R-11, R-25 | 새로 추가 |
+| `KEY_TOO_LONG` | 400 | key의 UTF-8 길이가 99byte를 넘을 때 | `dispatcher.py` | R-23 | 새로 추가 |
+| `STORE_FULL` | 507 | 버킷이 `MAX_CAPACITY`인데 SET이 적재율 0.75를 넘길 때. 덮어쓰기도 포함해요 | `store.py`가 `StoreFullError`를 던지고 `dispatcher.py`가 변환 | - | 새로 추가 |
+
+검사는 위 표의 순서대로 해요. 앞에서 오류가 나면 뒤의 검사는 하지 않아요. 새로 추가하는 코드의 HTTP 상태는 제안값이에요. 입력값 오류는 기존 오류처럼 `400`이고, `STORE_FULL`은 요청이 아니라 서버 쪽 한계라서 `507 Insufficient Storage`예요.
+
 ## 명령어별 실행 순서
 
 ### SET (`SET kiwi green`)
 
 1. key와 value가 문자열인지, key가 99byte 이하인지 검사해요. 아니면 오류를 반환하고 끝내요. (R-23, R-25)
-2. `(size + tombstones + 1) / capacity > 0.75`이면 테이블을 2배로 확장해요. (R-07) 이미 `MAX_CAPACITY`이면 `STORE_FULL` 오류를 반환하고 끝내요.
+2. `(size + tombstones + 1) / capacity > 0.75`이면 테이블을 2배로 확장해요. (R-07) 이미 `MAX_CAPACITY`이면 `STORE_FULL` 오류를 반환하고 끝내요. 기존 key를 덮어쓰는 SET도 여기서 막혀요.
 3. `_probe(kiwi)`를 실행해서 `(found, insert_at)`을 받아요. 확장 뒤에는 홈 버킷이 바뀌므로, 반드시 2번 다음에 실행해요.
 4. `found`가 있으면 → 그 버킷을 `fill`로 덮어쓰고 6번으로 가요. value와 `value_len`이 함께 바뀌어요. (R-14)
 5. `found`가 없으면 → `insert_at` 버킷을 `fill`로 채워서 `OCCUPIED`로 바꿔요. 그 자리가 `TOMBSTONE`이었으면 `tombstones -= 1`을 해요. 마지막으로 `size += 1`을 해요.
@@ -331,7 +350,3 @@ SET에서 value로 `null`을 받지 않으므로, GET의 `null`은 항상 "없�
 
 2. 명령어 함수가 입력값 오류를 반환할 수 있게, 명령어 함수는 `(HTTP 상태 코드, 응답 dict)`를 반환해요. `execute`의 마지막 줄 `return 200, func(args)`를 `return func(args)`로 바꾸고, `cmd_ping`도 `(200, ok_response("PONG"))`을 반환하게 고쳐요.
 3. SET에서 `StoreFullError`가 나면 오류 응답 `STORE_FULL`로 바꿔요.
-
-## 결정이 필요한 것
-
-- **`STORE_FULL`, `WRONG_TYPE`, `KEY_TOO_LONG`의 HTTP 상태 코드**: 입력값 오류는 기존 오류처럼 `400`을 제안해요. `STORE_FULL`은 서버 쪽 한계라서 `507 Insufficient Storage`를 제안해요.
