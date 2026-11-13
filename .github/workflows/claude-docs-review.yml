@@ -1,0 +1,38 @@
+name: Claude Docs Review
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened]
+    paths:
+      - "**/*.md"
+      - "**/*.mdx"
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            레포지토리: ${{ github.repository }}
+            PR 번호: ${{ github.event.pull_request.number }}
+
+            아래 순서로 PR에서 바뀐 문서를 리뷰해 주세요.
+            1. docs/technical-writing-principles.md를 읽어요.
+            2. gh pr diff로 바뀐 문서를 찾아 읽고, 원칙에 맞지 않는 부분을 스스로 찾아요.
+            3. 인라인 코멘트로 판단 이유와 수정 초안을 남겨요.
+            4. 마지막에 원칙을 기준으로 한 번 더 검토해요.
+
+            억지로 코멘트를 만들지 말고, 문제가 없으면 gh pr comment로 한 줄만 남겨요.
+          claude_args: |
+            --max-turns 20
+            --allowedTools "Read,Glob,Grep,Bash(gh pr diff:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"

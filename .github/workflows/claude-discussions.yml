@@ -1,0 +1,71 @@
+name: Claude Discussions
+
+# Discussion 본문이나 댓글에 @claude가 있으면 Claude가 답글을 단다.
+# discussion 이벤트는 기본 브랜치(main)에 있는 워크플로만 실행된다.
+on:
+  discussion:
+    types: [created]
+  discussion_comment:
+    types: [created]
+
+jobs:
+  claude:
+    # 팀원(OWNER, MEMBER, COLLABORATOR)과 커밋이 머지된 적 있는 사람(CONTRIBUTOR)이 쓴 글에서만 실행한다.
+    # org 멤버십이 비공개면 멤버도 CONTRIBUTOR로 표시된다.
+    if: |
+      (github.event_name == 'discussion' &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.discussion.author_association) &&
+        (contains(github.event.discussion.body, '@claude') || contains(github.event.discussion.title, '@claude'))) ||
+      (github.event_name == 'discussion_comment' &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.comment.author_association) &&
+        contains(github.event.comment.body, '@claude') &&
+        github.event.comment.user.type != 'Bot')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      discussions: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # claude-code-action은 discussion 이벤트를 지원하지 않아서(Unsupported event type)
+      # Claude Code CLI를 직접 설치해 실행한다.
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run Claude Code
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 사용자 입력은 셸에 직접 넣지 않고 환경 변수로만 넘긴다.
+          DISCUSSION_TITLE: ${{ github.event.discussion.title }}
+          DISCUSSION_BODY: ${{ github.event.discussion.body }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          DISCUSSION_ID: ${{ github.event.discussion.node_id }}
+        run: |
+          cat > prompt.md <<EOF
+          이 레포의 GitHub Discussion에서 누군가 @claude로 너를 불렀다.
+
+          - Discussion 제목: ${DISCUSSION_TITLE}
+          - Discussion 본문:
+          ${DISCUSSION_BODY}
+          - 너를 부른 댓글 (비어 있으면 본문에서 부른 것):
+          ${COMMENT_BODY}
+
+          할 일
+          1. 요청을 읽고 답한다. 필요하면 레포 파일(docs/ 등)을 Read, Glob, Grep으로 읽고 근거로 쓴다.
+          2. 답은 한국어로, 짧고 분명하게 쓴다. 답변 안에 "@claude"라는 글자를 쓰지 않는다.
+          3. 답변을 reply.md 파일로 저장한 뒤, 아래 명령 하나로 Discussion에 댓글을 단다.
+
+          gh api graphql -f query='mutation(\$id: ID!, \$body: String!) { addDiscussionComment(input: {discussionId: \$id, body: \$body}) { comment { url } } }' -f id=${DISCUSSION_ID} -F body=@reply.md
+
+          레포 파일은 수정하지 않는다.
+          EOF
+          claude -p "$(cat prompt.md)" --allowedTools "Read,Glob,Grep,Write,Bash(gh api graphql:*)"
