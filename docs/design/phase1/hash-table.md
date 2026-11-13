@@ -40,9 +40,6 @@
 | `key_len` | `int` | key의 UTF-8 byte 길이예요. 최대 99예요. (R-23) (예: `"kiwi"` → `4`) |
 | `value` | `str` | 저장된 value예요. 빈 문자열 `""`도 저장할 수 있어요. (R-12) |
 | `value_len` | `int` | value의 UTF-8 byte 길이예요. (예: `"green"` → `5`) |
-| `expire_at` | `float` 또는 `None` | 만료 시각이에요. `time.monotonic()` 기준 초 단위예요. `None`이면 만료되지 않아요. |
-
-남은 시간(ttl) 대신 만료 시각(`expire_at`)을 저장해요. 그러면 매초 값을 줄일 필요 없이, 조회할 때 `now >= expire_at`만 비교하면 돼요. `time.monotonic()`을 쓰면 시스템 시계가 바뀌어도 만료 시각이 틀어지지 않아요.
 
 ```python
 from enum import Enum
@@ -55,7 +52,7 @@ class State(Enum):
 
 
 class Bucket:
-    __slots__ = ("state", "key", "key_len", "value", "value_len", "expire_at")
+    __slots__ = ("state", "key", "key_len", "value", "value_len")
 
     def __init__(self):
         self.state = State.EMPTY
@@ -63,16 +60,14 @@ class Bucket:
         self.key_len = 0
         self.value = None
         self.value_len = 0
-        self.expire_at = None
 
-    def fill(self, key, value, expire_at=None):
+    def fill(self, key, value):
         """새로 넣거나 덮어쓸 때 모든 필드를 한 번에 채워요."""
         self.state = State.OCCUPIED
         self.key = key
         self.key_len = len(key.encode("utf-8"))
         self.value = value
         self.value_len = len(value.encode("utf-8"))
-        self.expire_at = expire_at
 
     def mark_deleted(self):
         """TOMBSTONE으로 바꾸고 데이터를 비워요."""
@@ -81,10 +76,6 @@ class Bucket:
         self.key_len = 0
         self.value = None
         self.value_len = 0
-        self.expire_at = None
-
-    def is_expired(self, now):
-        return self.expire_at is not None and now >= self.expire_at
 ```
 
 `__slots__`를 쓰면 버킷마다 `__dict__`가 생기지 않아서 메모리를 아낄 수 있어요.
@@ -247,7 +238,7 @@ class StoreFullError(Exception):
 ### _resize
 
 1. 크기가 `capacity * 2`인 새 버킷 배열을 만들어요.
-2. 기존 버킷 중 `OCCUPIED`이고 만료되지 않은 것만 새 배열로 옮겨요. 새 `capacity`로 홈 버킷을 다시 계산해서 `_probe`의 `insert_at`에 넣어요. `TOMBSTONE`과 만료된 key는 버려요. (R-22)
+2. 기존 버킷 중 `OCCUPIED`만 새 배열로 옮겨요. 새 `capacity`로 홈 버킷을 다시 계산해서 `_probe`의 `insert_at`에 넣어요. `TOMBSTONE`은 버려요. (R-22)
 3. `size`는 옮긴 개수로, `tombstones`는 0으로 맞춰요.
 
 새 배열에는 중복 key도 `TOMBSTONE`도 없어서, `_probe`가 반환한 `insert_at`에 바로 넣으면 돼요.
@@ -255,7 +246,6 @@ class StoreFullError(Exception):
 ```python
 def _resize(self, new_capacity):
     old_buckets = self.buckets
-    now = time.monotonic()
 
     self.capacity = new_capacity
     self.buckets = [Bucket() for _ in range(new_capacity)]
@@ -263,9 +253,9 @@ def _resize(self, new_capacity):
     self.tombstones = 0
 
     for b in old_buckets:
-        if b.state == State.OCCUPIED and not b.is_expired(now):
+        if b.state == State.OCCUPIED:
             _, insert_at = self._probe(b.key)
-            self.buckets[insert_at].fill(b.key, b.value, b.expire_at)
+            self.buckets[insert_at].fill(b.key, b.value)
             self.size += 1
 ```
 
@@ -285,7 +275,7 @@ def _resize(self, new_capacity):
 | 조건 | 응답 | 근거 |
 | --- | --- | --- |
 | GET한 key가 없음 | nil (`ok: true`, `result: null`) | R-16 |
-| GET한 key가 만료됐거나 삭제됨 | nil | R-11 비고 |
+| GET한 key가 삭제됨 | nil | R-11 비고 |
 | DEL한 key가 없음 | `0` | R-17 |
 
 SET에서 value로 `null`을 받지 않으므로, GET의 `null`은 항상 "없음"이라는 뜻만 가져요.
@@ -297,7 +287,7 @@ SET에서 value로 `null`을 받지 않으므로, GET의 `null`은 항상 "없�
 1. key와 value가 문자열인지, key가 99byte 이하인지 검사해요. 아니면 오류를 반환하고 끝내요. (R-23, R-25)
 2. `(size + tombstones + 1) / capacity > 0.75`이면 테이블을 2배로 확장해요. (R-07) 이미 `MAX_CAPACITY`이면 `STORE_FULL` 오류를 반환하고 끝내요.
 3. `_probe(kiwi)`를 실행해서 `(found, insert_at)`을 받아요. 확장 뒤에는 홈 버킷이 바뀌므로, 반드시 2번 다음에 실행해요.
-4. `found`가 있으면 → 그 버킷을 `fill`로 덮어쓰고 6번으로 가요. value, `value_len`, `expire_at`이 함께 바뀌어요. (R-14)
+4. `found`가 있으면 → 그 버킷을 `fill`로 덮어쓰고 6번으로 가요. value와 `value_len`이 함께 바뀌어요. (R-14)
 5. `found`가 없으면 → `insert_at` 버킷을 `fill`로 채워서 `OCCUPIED`로 바꿔요. 그 자리가 `TOMBSTONE`이었으면 `tombstones -= 1`을 해요. 마지막으로 `size += 1`을 해요.
 6. `OK`를 반환해요.
 
@@ -306,8 +296,7 @@ SET에서 value로 `null`을 받지 않으므로, GET의 `null`은 항상 "없�
 1. key가 문자열인지, 99byte 이하인지 검사해요. 아니면 오류를 반환하고 끝내요. (R-23, R-25)
 2. `_probe(kiwi)`를 실행해서 `found`를 받아요.
 3. `found`가 없으면 → nil을 반환해요. (R-16)
-4. `found`가 있지만 만료됐으면 → `mark_deleted`로 `TOMBSTONE`으로 바꾸고 `size -= 1`, `tombstones += 1`을 해요. nil을 반환해요.
-5. 그 외에는 → 그 버킷의 value를 반환해요. (R-15)
+4. `found`가 있으면 → 그 버킷의 value를 반환해요. (R-15)
 
 ### DEL (`DEL kiwi`)
 
@@ -315,21 +304,18 @@ SET에서 value로 `null`을 받지 않으므로, GET의 `null`은 항상 "없�
 2. `_probe(kiwi)`를 실행해서 `found`를 받아요.
 3. `found`가 없으면 → `0`을 반환해요.
 4. `found`가 있으면 → `mark_deleted`로 `TOMBSTONE`으로 바꾸고 `size -= 1`, `tombstones += 1`을 해요.
-5. `1`을 반환해요. 만료된 key였다면 4번처럼 정리만 하고 `0`을 반환해요. (R-17)
+5. `1`을 반환해요. (R-17)
 
 ### EXISTS (`EXISTS kiwi`)
 
 1. key가 문자열인지, 99byte 이하인지 검사해요. 아니면 오류를 반환하고 끝내요. (R-23, R-25)
 2. `_probe(kiwi)`를 실행해서 `found`를 받아요.
 3. `found`가 없으면 → `0`을 반환해요.
-4. `found`가 있지만 만료됐으면 → GET 4번처럼 정리하고 `0`을 반환해요.
-5. 그 외에는 → `1`을 반환해요. (R-18)
+4. `found`가 있으면 → `1`을 반환해요. (R-18)
 
 ### DBSIZE
 
 1. `size`를 반환해요. (R-19) `_probe`는 부르지 않아요.
-
-만료됐지만 아직 조회되지 않은 key는 `OCCUPIED`로 남아 있어서 `size`에 포함돼요. 만료는 조회할 때 확인하는 방식(lazy expiration)이라 생기는 차이예요.
 
 ## dispatcher 연결
 
@@ -348,5 +334,4 @@ SET에서 value로 `null`을 받지 않으므로, GET의 `null`은 항상 "없�
 
 ## 결정이 필요한 것
 
-- **`expire_at`을 설정하는 명령어**: 요구사항에 `EXPIRE`나 `SET key value EX 초` 같은 명령어가 없어서, Phase 1에서는 `expire_at`이 항상 `None`이에요. 만료 확인 흐름은 이 문서대로 먼저 구현해 두고, TTL 명령어를 Phase 1에 넣을지는 따로 정해요.
 - **`STORE_FULL`, `WRONG_TYPE`, `KEY_TOO_LONG`의 HTTP 상태 코드**: 입력값 오류는 기존 오류처럼 `400`을 제안해요. `STORE_FULL`은 서버 쪽 한계라서 `507 Insufficient Storage`를 제안해요.
