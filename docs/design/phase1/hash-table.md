@@ -224,6 +224,19 @@ SET에서 새 key를 넣기 **전에** 확인해요. (R-07)
 
 `MAX_CAPACITY`는 `1 << 20`(약 100만 버킷)이에요. 적재율 0.75를 적용하면 key를 약 78만 개까지 저장할 수 있어요.
 
+0.75는 **확장하는 기준**이고, SET이 막히는 기준이 아니에요. SET은 버킷이 이미 `MAX_CAPACITY`인데 0.75를 넘을 때만 막혀요.
+
+| 상황 | 결과 |
+| --- | --- |
+| 적재율 0.75 이하 | 그대로 SET해요. |
+| 적재율 0.75 초과, `capacity < MAX_CAPACITY` | 버킷을 2배로 확장한 뒤 SET해요. 오류는 나지 않아요. |
+| 적재율 0.75 초과, `capacity == MAX_CAPACITY` | 더 확장할 수 없어서 `STORE_FULL` 오류를 반환하고 SET하지 않아요. |
+
+```
+버킷 8개, key 6개         → SET → 7/8 > 0.75 → 버킷 16개로 확장 → 저장 성공
+버킷 1,048,576개, key 약 78만 개 → SET → 0.75 초과 → 더 확장할 수 없음 → STORE_FULL
+```
+
 확장 조건을 만족했는데 `capacity`가 이미 `MAX_CAPACITY`이면, 확장하지 않고 `StoreFullError`를 던져요. `dispatcher.py`가 이 예외를 받아 `STORE_FULL` 오류로 응답해요. 실제 Redis가 `maxmemory`를 넘었을 때 OOM 오류를 내는 것과 같은 방식이에요.
 
 ```python
