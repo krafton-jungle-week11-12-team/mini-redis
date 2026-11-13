@@ -299,7 +299,7 @@ SET에서 value로 `null`을 받지 않으므로, GET의 `null`은 항상 "없�
 | `KEY_TOO_LONG` | 400 | key의 UTF-8 길이가 99byte를 넘을 때 | `dispatcher.py` | R-23 | 새로 추가 |
 | `STORE_FULL` | 507 | 버킷이 `MAX_CAPACITY`인데 SET이 적재율 0.75를 넘길 때. 덮어쓰기도 포함해요 | `store.py`가 `StoreFullError`를 던지고 `dispatcher.py`가 변환 | - | 새로 추가 |
 
-검사는 위 표의 순서대로 해요. 앞에서 오류가 나면 뒤의 검사는 하지 않아요. 새로 추가하는 코드의 HTTP 상태는 제안값이에요. 입력값 오류는 기존 오류처럼 `400`이고, `STORE_FULL`은 요청이 아니라 서버 쪽 한계라서 `507 Insufficient Storage`예요.
+검사는 위 표의 순서대로 해요. 앞에서 오류가 나면 뒤의 검사는 하지 않아요. 새로 추가하는 코드의 HTTP 상태는 이렇게 정했어요. 입력값 오류(`WRONG_TYPE`, `KEY_TOO_LONG`)는 클라이언트가 요청을 잘못 보낸 것이라 기존 오류처럼 `400 Bad Request`예요. `STORE_FULL`은 요청은 올바른데 서버 저장 공간이 부족한 것이라 `507 Insufficient Storage`예요.
 
 ## 명령어별 실행 순서
 
