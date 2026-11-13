@@ -1,10 +1,10 @@
 # 기술 스택
 
-이 문서를 읽으면 mini-redis의 각 구성 요소를 무엇으로 만드는지 한눈에 볼 수 있어요.
+이 문서를 읽으면 mini-redis의 각 구성 요소를 무엇으로 만드는지 한눈에 볼 수 있어요. 모든 구성 요소는 코드가 위에서 아래로 한 줄씩 실행되는 동기 방식으로 만들어요.
 
-| 구성 요소 | 선택 |
-| --- | --- |
-| mini-redis 서버 | Python + asyncio, HTTP |
-| 데모 API | FastAPI + redis-py |
-| 테스트 | pytest |
-| 성능 측정 | 캐시 있을 때와 없을 때 응답 시간 비교 (wrk, locust 또는 간단한 스크립트) |
+| 구성 요소 | 선택 | 비고 |
+| --- | --- | --- |
+| mini-redis 서버 | Python 표준 라이브러리 `http.server` (동기, 단일 스레드), HTTP | 요청을 한 번에 하나씩 처리해요. 동시 접속은 Phase 3에서 다뤄요. |
+| 데모 API | FastAPI + requests | 엔드포인트를 `async def`가 아닌 `def`로 만들어요. `async def` 안에서 requests를 부르면 다른 요청이 막혀요. |
+| 테스트 | pytest + requests | |
+| 성능 측정 | 캐시 있을 때와 없을 때 응답 시간 비교 (wrk, locust 또는 간단한 스크립트) | 서버가 한 번에 하나씩 처리하므로 Phase 1~2에서는 동시 요청 수를 1로 두고 측정해요. |
