@@ -2,7 +2,7 @@ name: Daily Scrum
 
 on:
   schedule:
-    - cron: '0 19 * * *'   # 매일 04:00 KST
+    - cron: '0 23 * * *'   # 매일 08:00 KST (UTC 23:00)
   workflow_dispatch:
 
 permissions:
@@ -18,7 +18,7 @@ jobs:
           set -euo pipefail
 
           RESULT=$(gh api graphql \
-            -f query='query($o:String!,$n:String!){repository(owner:$o,name:$n){id discussionCategory(slug:"daily-scrum"){id}}}' \
+            -f query='query($o:String!,$n:String!){repository(owner:$o,name:$n){id discussionCategory(slug:"daily-scrum"){id discussions(first:10,orderBy:{field:CREATED_AT,direction:DESC}){nodes{title url}}}}}' \
             -f o="${GITHUB_REPOSITORY%/*}" -f n="${GITHUB_REPOSITORY#*/}")
           echo "$RESULT"
 
@@ -28,6 +28,14 @@ jobs:
           if [ -z "$CAT_ID" ]; then
             echo "::error::'daily-scrum' slug의 Discussion 카테고리를 찾을 수 없습니다."
             exit 1
+          fi
+
+          # 오늘 글을 이미 누가 직접 열었으면 새로 만들지 않는다.
+          TITLE="[Daily] $(TZ=Asia/Seoul date +%F)"
+          EXISTING=$(echo "$RESULT" | jq -r --arg t "$TITLE" '.data.repository.discussionCategory.discussions.nodes[] | select(.title == $t) | .url' | head -n1)
+          if [ -n "$EXISTING" ]; then
+            echo "오늘 스크럼 글이 이미 있어요: $EXISTING"
+            exit 0
           fi
 
           BODY=$(cat <<'EOF'
@@ -51,5 +59,5 @@ jobs:
           gh api graphql \
             -f query='mutation($r:ID!,$c:ID!,$t:String!,$b:String!){createDiscussion(input:{repositoryId:$r,categoryId:$c,title:$t,body:$b}){discussion{url}}}' \
             -f r="$REPO_ID" -f c="$CAT_ID" \
-            -f t="[Daily] $(TZ=Asia/Seoul date +%F)" \
+            -f t="$TITLE" \
             -f b="$BODY"
