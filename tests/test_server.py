@@ -73,3 +73,33 @@ def test_same_response_shape(base_url):
     ok = command(base_url, {"command": "PING", "args": []}).json()
     err = command(base_url, {"command": "FOO", "args": []}).json()
     assert ok.keys() == err.keys() == {"ok", "result", "error"}
+
+
+MAX_BODY_BYTES = 1024 * 1024
+
+
+def _set_body_of_size(size):
+    """본문 전체가 정확히 size byte가 되도록 value 길이를 맞춘 SET 요청 본문이에요."""
+    prefix = '{"command": "SET", "args": ["key1", "'
+    suffix = '"]}'
+    value = "a" * (size - len(prefix) - len(suffix))
+    body = (prefix + value + suffix).encode("utf-8")
+    assert len(body) == size
+    return body
+
+
+def _post_raw(url, body):
+    return requests.post(f"{url}/command", data=body,
+                         headers={"Content-Type": "application/json"}, timeout=5)
+
+
+def test_val10_body_up_to_1mb_allowed(base_url):
+    res = _post_raw(base_url, _set_body_of_size(MAX_BODY_BYTES))
+    assert res.status_code == 200
+    assert res.json()["result"] == "OK"
+
+
+def test_val11_body_over_1mb_rejected(base_url):
+    res = _post_raw(base_url, _set_body_of_size(MAX_BODY_BYTES + 1))
+    assert res.status_code == 413
+    assert res.json()["error"]["code"] == "VALUE_TOO_LARGE"
