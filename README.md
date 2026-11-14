@@ -1,6 +1,6 @@
 # mini-Redis
 
-HTTP로 명령을 주고받는 작은 Redis예요.
+HTTP로 명령을 주고받는 작은 Redis예요. 이 문서를 읽으면 mini-Redis 서버를 켜고, 같은 Wi-Fi의 다른 PC에서 `curl`로 `SET`/`GET` 같은 명령을 보낼 수 있어요. 서버를 여는 사람은 1번, 접속하는 사람은 2번부터 읽어요.
 
 ## 1. 서버 여는 사람
 
@@ -94,6 +94,9 @@ curl http://<서버 IP>:6380/health
 {"command": "SET", "args": ["key", "value"]}
 ```
 
+- `command`: 실행할 명령어 이름이에요. 문자열로 입력해요. 대소문자는 구분하지 않아요. (예: `"SET"`)
+- `args`: 명령어에 넘길 인자 목록이에요. 문자열 배열로 입력하고, 생략하면 빈 배열로 처리해요. (예: `["key", "value"]`)
+
 | 명령어 | args | 결과 |
 | --- | --- | --- |
 | `PING` | `[]` | `"PONG"` |
@@ -110,7 +113,7 @@ curl http://<서버 IP>:6380/health
 - `capacity`: 해시 테이블의 버킷 수예요. 처음엔 8이고, 가득 차기 전에 늘어나요.
 - `tombstones`: `DEL`로 지운 뒤 남아 있는 삭제 표시 버킷 수예요. 테이블이 커지면 0으로 정리돼요.
 
-명령어 이름은 대소문자를 구분하지 않아요. 응답은 모두 `{ok, result, error}` 형식이고, 실패하면 `error`에 `code`와 `message`가 담겨요.
+응답은 모두 `{ok, result, error}` 형식이고, 실패하면 `error`에 `code`와 `message`가 담겨요.
 
 | error.code | HTTP | 언제 |
 | --- | --- | --- |
