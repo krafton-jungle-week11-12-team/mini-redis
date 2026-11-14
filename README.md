@@ -108,6 +108,22 @@ curl http://<서버 IP>:6380/health
 | `EXISTS` | `["key"]` | 있으면 `1`, 없으면 `0` |
 | `DBSIZE` | `[]` | 저장된 key 개수 |
 
+### 원자적 명령어
+
+명령어 하나는 중간에 다른 요청이 끼어들지 않고 한 번에 실행돼요. 여러 사람이 동시에 `INCR`을 보내도 빠지는 증가가 없어요.
+
+| 명령어 | args | 결과 |
+| --- | --- | --- |
+| `GETSET` | `["key", "value"]` | 저장하고 저장 전 value를 돌려줘요. 없었으면 `null` |
+| `SETNX` | `["key", "value"]` | key가 없을 때만 저장해요. 저장했으면 `1`, 아니면 `0` |
+| `SETXX` | `["key", "value"]` | key가 있을 때만 덮어써요. 덮어썼으면 `1`, 아니면 `0` (실제 Redis에는 없는 명령어예요) |
+| `INCR` | `["key"]` | 정수 value에 1을 더하고 결과를 정수로 돌려줘요. 없는 key는 0으로 봐요 |
+| `DECR` | `["key"]` | 정수 value에서 1을 빼고 결과를 정수로 돌려줘요. 없는 key는 0으로 봐요 |
+| `MSET` | `["k1", "v1", "k2", "v2", ...]` | `"OK"`. key 20개까지 전부 저장하거나, 오류가 나면 하나도 저장하지 않아요 |
+| `MGET` | `["k1", "k2", ...]` | value 배열. 없는 key는 `null`이고, key는 20개까지예요 |
+
+`INCR`·`DECR`은 결과를 문자열로 저장해서 `GET`하면 `"11"`처럼 나와요. 다룰 수 있는 범위는 -2^63 ~ 2^63-1이에요.
+
 ### 디버깅 명령어
 
 해시 테이블 상태를 확인하거나 테스트 중에 저장소를 비울 때 써요.
@@ -133,9 +149,11 @@ curl http://<서버 IP>:6380/health
 | --- | --- | --- |
 | `INVALID_REQUEST` | 400 | JSON이 아니거나, `command`가 없거나, `args`가 배열이 아닐 때 |
 | `UNKNOWN_COMMAND` | 400 | 지원하지 않는 명령어일 때 |
-| `WRONG_ARGS` | 400 | 인자 개수가 맞지 않을 때 |
+| `WRONG_ARGS` | 400 | 인자 개수가 맞지 않을 때 (`MSET` 인자가 홀수이거나 key가 20개를 넘을 때 포함) |
 | `WRONG_TYPE` | 400 | key나 value가 문자열이 아닐 때 (`null` 포함) |
 | `KEY_TOO_LONG` | 400 | key의 UTF-8 길이가 99byte를 넘을 때 |
+| `NOT_INTEGER` | 400 | `INCR`·`DECR` 대상 value가 정수가 아닐 때 |
+| `INTEGER_OVERFLOW` | 400 | `INCR`·`DECR` 결과가 64비트 정수 범위를 넘을 때 |
 | `VALUE_TOO_LARGE` | 413 | 요청 본문이 1MB를 넘을 때 |
 | `NOT_FOUND` | 404 | `/command`, `/health`가 아닌 경로일 때 |
 | `STORE_FULL` | 507 | 저장소가 최대 크기에 도달해 더 저장할 수 없을 때 |
@@ -157,6 +175,16 @@ curl -X POST http://<서버 IP>:6380/command -d '{"command": "DEL", "args": ["he
 
 curl -X POST http://<서버 IP>:6380/command -d '{"command": "DBSIZE", "args": []}'
 # {"ok": true, "result": 0, "error": null}
+
+# 원자적 명령어
+curl -X POST http://<서버 IP>:6380/command -d '{"command": "INCR", "args": ["views"]}'
+# {"ok": true, "result": 1, "error": null}   ← views가 없어서 0 + 1
+
+curl -X POST http://<서버 IP>:6380/command -d '{"command": "MSET", "args": ["a", "1", "b", "2"]}'
+# {"ok": true, "result": "OK", "error": null}
+
+curl -X POST http://<서버 IP>:6380/command -d '{"command": "MGET", "args": ["a", "b", "c"]}'
+# {"ok": true, "result": ["1", "2", null], "error": null}
 
 # 디버깅 명령어
 curl -X POST http://<서버 IP>:6380/command -d '{"command": "INFO", "args": []}'
@@ -224,6 +252,11 @@ r.get("hello")            # "world", 없으면 None
 r.delete("hello")         # 1 (del은 Python 예약어라 delete예요)
 r.exists("hello")         # 0
 r.dbsize()                # 0
+
+r.incr("views")                   # 1
+r.mset({"a": "1", "b": "2"})      # "OK"
+r.mget("a", "b", "c")             # ["1", "2", None]
+r.setnx("a", "x")                 # 0 (이미 있어서 저장 안 함)
 
 try:
     r.set("k" * 100, "v")
