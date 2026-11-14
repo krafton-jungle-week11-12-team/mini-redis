@@ -4,7 +4,35 @@ HTTP로 명령을 주고받는 작은 Redis예요.
 
 ## 1. 서버 여는 사람
 
-Python 3.10 이상만 있으면 돼요. 서버는 표준 라이브러리만 써요.
+### Python 설치
+
+Python 3.10 이상이 필요해요. 먼저 설치되어 있는지 확인해요.
+
+```bash
+python3 --version   # Windows는 python --version
+```
+
+버전이 3.10보다 낮거나 명령어를 찾을 수 없다면 Python을 설치해요.
+
+| OS | 설치 방법 |
+| --- | --- |
+| macOS | `brew install python@3.12` |
+| Ubuntu | `sudo apt install python3 python3-venv` |
+| Windows | [python.org](https://www.python.org/downloads/)에서 설치 (설치 화면에서 "Add python.exe to PATH" 체크) |
+
+### 가상환경 만들기
+
+서버는 표준 라이브러리만 써서 이 단계를 건너뛰어도 실행돼요. 테스트를 돌리려면 필요해요.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate        # Windows는 .venv\Scripts\activate
+pip install -r requirements-dev.txt
+```
+
+`requirements-dev.txt`는 테스트에 필요한 패키지(pytest, requests)예요. 가상환경을 활성화하면 아래 명령어에서 `python`이 `.venv`의 Python을 가리켜요.
+
+### 서버 켜기
 
 ```bash
 python -m mini_redis --host 0.0.0.0   # 다른 PC 접속 허용, Ctrl+C로 종료
@@ -12,6 +40,8 @@ python -m mini_redis --host 0.0.0.0   # 다른 PC 접속 허용, Ctrl+C로 종�
 
 - `--host`를 빼면 `127.0.0.1`로 켜져서 내 PC에서만 접속돼요.
 - 포트는 기본 6380이에요. 바꾸려면 `--port 8100`처럼 지정해요.
+  - 6379는 Docker나 brew로 띄운 진짜 Redis가 자주 쓰고, macOS에서 7000은 AirPlay 수신 모드가 써서 피했어요.
+  - 포트가 사용 중이라고 나오면 어떤 프로그램이 쓰는지 확인해요. macOS는 `lsof -i :6380`, Windows는 `netstat -ano | findstr :6380`이에요.
 - 내 IP를 확인해서 사용하는 사람에게 알려줘요.
   - macOS: `ipconfig getifaddr en0`
   - Windows: `ipconfig` → **무선 LAN 어댑터 Wi-Fi**의 IPv4 주소 (`vEthernet (WSL)` 항목은 아니에요)
@@ -22,6 +52,7 @@ python -m mini_redis --host 0.0.0.0   # 다른 PC 접속 허용, Ctrl+C로 종�
 - 서버와 **같은 Wi-Fi**에 연결해요.
 - 서버 IP를 받아서 아래 명령어의 `<서버 IP>` 자리에 넣어요.
 - 명령은 `curl`로 `POST /command`에 JSON을 보내요.
+  - Windows PowerShell 5.1에서는 `curl`이 `Invoke-WebRequest`의 별칭이라 요청이 실패할 수 있어요. `curl` 대신 `curl.exe`로 입력해요.
 
 ## 3. 연결 확인
 
@@ -81,11 +112,16 @@ curl http://<서버 IP>:6380/health
 
 명령어 이름은 대소문자를 구분하지 않아요. 응답은 모두 `{ok, result, error}` 형식이고, 실패하면 `error`에 `code`와 `message`가 담겨요.
 
-| error.code | 언제 |
-| --- | --- |
-| `INVALID_REQUEST` | JSON 형식이 틀렸을 때 |
-| `UNKNOWN_COMMAND` | 없는 명령어일 때 |
-| `WRONG_ARGS` | 인자 개수가 틀렸을 때 |
+| error.code | HTTP | 언제 |
+| --- | --- | --- |
+| `INVALID_REQUEST` | 400 | JSON이 아니거나, `command`가 없거나, `args`가 배열이 아닐 때 |
+| `UNKNOWN_COMMAND` | 400 | 지원하지 않는 명령어일 때 |
+| `WRONG_ARGS` | 400 | 인자 개수가 맞지 않을 때 |
+| `WRONG_TYPE` | 400 | key나 value가 문자열이 아닐 때 (`null` 포함) |
+| `KEY_TOO_LONG` | 400 | key의 UTF-8 길이가 99byte를 넘을 때 |
+| `VALUE_TOO_LARGE` | 413 | 요청 본문이 1MB를 넘을 때 |
+| `NOT_FOUND` | 404 | `/command`, `/health`가 아닌 경로일 때 |
+| `STORE_FULL` | 507 | 저장소가 최대 크기에 도달해 더 저장할 수 없을 때 |
 
 ## 6. 사용 예시
 
@@ -126,7 +162,8 @@ macOS 터미널에서 응답 끝에 붙는 `%`는 줄바꿈이 없다는 표시�
 
 ## 테스트
 
+가상환경을 활성화하고 패키지를 설치한 상태에서 실행해요([가상환경 만들기](#가상환경-만들기) 참고).
+
 ```bash
-pip install -r requirements-dev.txt
 pytest
 ```
