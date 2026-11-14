@@ -338,7 +338,7 @@ SET에서 value로 `null`을 받지 않으므로, GET의 `null`은 항상 "없�
 
 1. `size`를 반환해요. (R-19) `_probe`는 부르지 않아요.
 
-### FLUSHALL
+### FLUSH
 
 1. 지울 개수로 지금의 `size`를 기억해요.
 2. 버킷 배열을 버킷 8개짜리 새 배열로 바꾸고, `size`와 `tombstones`를 0으로 되돌려요. 기존 배열은 그대로 버려요.
@@ -358,7 +358,7 @@ SET에서 value로 `null`을 받지 않으므로, GET의 `null`은 항상 "없�
    | `EXISTS` | 1 | `1` 또는 `0` |
    | `DBSIZE` | 0 | 저장된 key 개수 |
    | `INFO` | 0 | `{"size", "capacity", "tombstones"}` |
-   | `FLUSHALL` | 0 | 지운 key 개수 |
+   | `FLUSH` | 0 | 지운 key 개수 |
 
 2. 입력값 검사는 명령어 함수가 아니라 `execute`에서 한 번에 해요. 인자 개수를 확인한 바로 다음에 두 가지를 추가해요.
    - 모든 인자가 문자열인지 확인해요. 아니면 `WRONG_TYPE`을 반환해요. (R-11, R-25)

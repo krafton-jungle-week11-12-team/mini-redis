@@ -106,7 +106,7 @@ curl http://<서버 IP>:6380/health
 | `EXISTS` | `["key"]` | 있으면 `1`, 없으면 `0` |
 | `DBSIZE` | `[]` | 저장된 key 개수 |
 | `INFO` | `[]` | 저장소 상태 `{"size", "capacity", "tombstones"}` |
-| `FLUSHALL` | `[]` | 모든 데이터를 지우고 지운 개수를 돌려줘요. 버킷 수도 처음(8개)으로 돌아가요 |
+| `FLUSH` | `[]` | 모든 데이터를 지우고 지운 개수를 돌려줘요. 버킷 수도 처음(8개)으로 돌아가요 |
 
 `INFO` 결과의 각 값은 아래와 같아요.
 
@@ -148,7 +148,7 @@ curl -X POST http://<서버 IP>:6380/command -d '{"command": "DBSIZE", "args": [
 curl -X POST http://<서버 IP>:6380/command -d '{"command": "INFO", "args": []}'
 # {"ok": true, "result": {"size": 0, "capacity": 8, "tombstones": 1}, "error": null}
 
-curl -X POST http://<서버 IP>:6380/command -d '{"command": "FLUSHALL", "args": []}'
+curl -X POST http://<서버 IP>:6380/command -d '{"command": "FLUSH", "args": []}'
 # {"ok": true, "result": 0, "error": null}   ← 지운 key 개수. 버킷 수와 tombstone도 처음으로 돌아가요
 ```
 

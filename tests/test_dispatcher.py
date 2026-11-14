@@ -83,11 +83,11 @@ def test_info_rejects_args():
     assert_error(dispatcher.execute("INFO", ["x"]), 400, "WRONG_ARGS")
 
 
-def test_flushall_removes_all_and_resets_table():
+def test_flush_removes_all_and_resets_table():
     for i in range(10):                        # 8칸 → 16칸으로 확장시켜요
         dispatcher.execute("SET", [f"k{i}", "v"])
     dispatcher.execute("DEL", ["k0"])
-    status, payload = dispatcher.execute("FLUSHALL", [])
+    status, payload = dispatcher.execute("FLUSH", [])
     assert status == 200
     assert payload["result"] == 9              # 지운 개수
     assert dispatcher.execute("DBSIZE", [])[1]["result"] == 0
@@ -97,18 +97,18 @@ def test_flushall_removes_all_and_resets_table():
     }
 
 
-def test_flushall_on_empty_store_returns_zero():
-    status, payload = dispatcher.execute("FLUSHALL", [])
+def test_flush_on_empty_store_returns_zero():
+    status, payload = dispatcher.execute("FLUSH", [])
     assert status == 200
     assert payload["result"] == 0
 
 
-def test_flushall_then_set_works():
+def test_flush_then_set_works():
     dispatcher.execute("SET", ["a", "1"])
-    dispatcher.execute("FLUSHALL", [])
+    dispatcher.execute("FLUSH", [])
     dispatcher.execute("SET", ["a", "2"])
     assert dispatcher.execute("GET", ["a"])[1]["result"] == "2"
 
 
-def test_flushall_rejects_args():
-    assert_error(dispatcher.execute("FLUSHALL", ["x"]), 400, "WRONG_ARGS")
+def test_flush_rejects_args():
+    assert_error(dispatcher.execute("FLUSH", ["x"]), 400, "WRONG_ARGS")
