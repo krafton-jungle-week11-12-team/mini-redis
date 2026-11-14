@@ -76,6 +76,7 @@ def execute(self, command, *args):
 | `exists(key)` | `EXISTS key` | `1` 또는 `0` |
 | `dbsize()` | `DBSIZE` | 저장된 key 개수 |
 | `info()` | `INFO` | `{"size", "capacity", "tombstones"}` dict |
+| `flush()` | `FLUSH` | 지운 key 개수 |
 
 서버에 명령어가 추가되면 여기에도 메서드를 추가해요. 추가하기 전에도 `execute("새명령어", ...)`로 바로 쓸 수 있어요.
 
