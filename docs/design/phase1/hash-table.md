@@ -348,7 +348,7 @@ SET에서 value로 `null`을 받지 않으므로, GET의 `null`은 항상 "없�
 
 ## dispatcher 연결
 
-1. SET, GET, DEL, EXISTS, DBSIZE를 `COMMANDS`에 인자 개수와 함께 등록해요.
+1. 아래 표의 명령어를 `COMMANDS`에 인자 개수와 함께 등록해요.
 
    | 명령어 | 인자 개수 | 성공 응답 `result` |
    | --- | --- | --- |
