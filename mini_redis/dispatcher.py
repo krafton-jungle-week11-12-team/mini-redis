@@ -1,9 +1,11 @@
 """명령어 이름을 보고 알맞은 함수를 실행하는 계층. HTTP를 몰라도 테스트할 수 있어요."""
 
+import re
 from collections import namedtuple
 
 from mini_redis.store import (
     MAX_KEY_LEN,
+    MAX_TTL,
     HashTable,
     IntegerOverflowError,
     NotIntegerError,
@@ -11,6 +13,20 @@ from mini_redis.store import (
 )
 
 store = HashTable()
+
+# int()는 " 1", "+1", "1_000"도 받아들여서 직접 정해요. 앞자리 0("007")도 거부하고,
+# 7자리 제한으로 아주 긴 숫자를 int()로 바꾸지 않아요. (R-52)
+_TTL = re.compile(r"[1-9][0-9]{0,6}")
+
+
+class InvalidTtlError(Exception):
+    """SET의 TTL 인자가 형식이나 범위에 맞지 않을 때 던져요."""
+
+
+def parse_ttl(arg):
+    if not _TTL.fullmatch(arg) or int(arg) > MAX_TTL:
+        raise InvalidTtlError
+    return int(arg)
 
 
 def ok_response(result):
@@ -26,7 +42,8 @@ def cmd_ping(args):
 
 
 def cmd_set(args):
-    store.set(args[0], args[1])
+    ttl = parse_ttl(args[2]) if len(args) == 3 else None   # 저장 전에 검사해서 실패하면 저장 안 해요
+    store.set(args[0], args[1], ttl)
     return ok_response("OK")
 
 
@@ -40,6 +57,10 @@ def cmd_del(args):
 
 def cmd_exists(args):
     return ok_response(store.exists(args[0]))   # 1 또는 0
+
+
+def cmd_ttl(args):
+    return ok_response(store.ttl(args[0]))      # 남은 초, 만료 없음 -1, key 없음 -2
 
 
 def cmd_dbsize(args):
@@ -95,7 +116,7 @@ MAX_BATCH = 20               # MSET·MGET 한 번에 다루는 key 수
 
 COMMANDS = {
     "PING":   Command(cmd_ping, 0, 0, FIRST),
-    "SET":    Command(cmd_set, 2, 2, FIRST),
+    "SET":    Command(cmd_set, 2, 3, FIRST),    # 세 번째 인자는 TTL(초)이라 key가 아니에요
     "GET":    Command(cmd_get, 1, 1, FIRST),
     "DEL":    Command(cmd_del, 1, 1, FIRST),
     "EXISTS": Command(cmd_exists, 1, 1, FIRST),
@@ -109,6 +130,7 @@ COMMANDS = {
     "DECR":   Command(cmd_decr, 1, 1, FIRST),
     "MSET":   Command(cmd_mset, 2, MAX_BATCH * 2, PAIRS),
     "MGET":   Command(cmd_mget, 1, MAX_BATCH, ALL),
+    "TTL":    Command(cmd_ttl, 1, 1, FIRST),
 }
 
 
@@ -135,6 +157,8 @@ def execute(command, args):
 
     try:
         return 200, spec.func(args)                                 # 5. 실행
+    except InvalidTtlError:
+        return 400, error_response("INVALID_TTL", f"TTL은 1 ~ {MAX_TTL} 사이의 정수예요")
     except StoreFullError:
         return 507, error_response("STORE_FULL", "저장소가 가득 찼어요")
     except NotIntegerError:

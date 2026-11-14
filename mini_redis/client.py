@@ -89,8 +89,14 @@ class MiniRedis:
     def ping(self):
         return self.execute("PING")
 
-    def set(self, key, value):
-        return self.execute("SET", key, value)
+    def set(self, key, value, ttl=None):
+        """ttl(초)을 주면 그 시간 뒤에 만료돼요. 인자는 모두 문자열이라 30 → "30"으로 보내요."""
+        if ttl is None:
+            return self.execute("SET", key, value)
+        return self.execute("SET", key, value, str(ttl))
+
+    def ttl(self, key):
+        return self.execute("TTL", key)
 
     def get(self, key):
         return self.execute("GET", key)
