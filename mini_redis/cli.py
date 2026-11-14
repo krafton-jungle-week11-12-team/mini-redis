@@ -30,6 +30,8 @@ def format_result(result):
     """결과 값을 사람이 읽기 쉬운 문자열로 바꿔요. (R-36)"""
     if result is None:
         return "(nil)"
+    if isinstance(result, list):        # MGET: 항목마다 번호를 붙이고 각 항목은 같은 규칙으로 바꿔요
+        return "\n".join(f"{i}) {format_result(item)}" for i, item in enumerate(result, 1))
     if isinstance(result, bool):        # bool은 int의 자식이라 먼저 걸러요
         return json.dumps(result)
     if isinstance(result, int):

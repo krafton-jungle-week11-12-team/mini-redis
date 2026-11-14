@@ -109,3 +109,26 @@ class MiniRedis:
 
     def flush(self):
         return self.execute("FLUSH")
+
+    def getset(self, key, value):
+        return self.execute("GETSET", key, value)
+
+    def setnx(self, key, value):
+        return self.execute("SETNX", key, value)
+
+    def setxx(self, key, value):
+        return self.execute("SETXX", key, value)
+
+    def incr(self, key):
+        return self.execute("INCR", key)
+
+    def decr(self, key):
+        return self.execute("DECR", key)
+
+    def mset(self, mapping):
+        """{"a": "1", "b": "2"} → MSET a 1 b 2"""
+        args = [x for pair in mapping.items() for x in pair]
+        return self.execute("MSET", *args)
+
+    def mget(self, *keys):
+        return self.execute("MGET", *keys)
