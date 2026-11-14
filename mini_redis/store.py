@@ -138,6 +138,12 @@ class HashTable:
         self.tombstones += 1
         return 1
 
+    def flush(self):
+        """모든 데이터를 지우고 초기 상태(버킷 8개)로 되돌려요. 지운 개수를 돌려줘요."""
+        removed = self.size
+        self.__init__()
+        return removed
+
     def exists(self, key):
         """있으면 1, 없으면 0이에요. (R-18)"""
         found, _ = self._probe(key)
