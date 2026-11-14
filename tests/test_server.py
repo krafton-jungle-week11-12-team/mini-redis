@@ -1,7 +1,11 @@
-"""기본 서버 동작 테스트 (R-01 ~ R-04). 테스트마다 빈 포트에 서버를 띄우고 끝나면 내려요."""
+"""기본 서버 동작 테스트 (R-01 ~ R-04)와 원자성 테스트 (ATM). 테스트마다 빈 포트에 서버를 띄우고 끝나면 내려요."""
+
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 import requests
+
+from mini_redis.client import MiniRedis
 
 
 def command(url, body):
@@ -76,3 +80,23 @@ def test_val11_body_over_1mb_rejected(base_url):
     res = _post_raw(base_url, _set_body_of_size(MAX_BODY_BYTES + 1))
     assert res.status_code == 413
     assert res.json()["error"]["code"] == "VALUE_TOO_LARGE"
+
+
+# ---------------------------------------------------------------------------
+# 원자성 (ATM). 케이스 ID는 docs/test-cases/phase3/test-cases.md를 따라요.
+# ---------------------------------------------------------------------------
+
+def test_atm01_concurrent_incr_loses_nothing(base_url):
+    port = int(base_url.rsplit(":", 1)[1])
+
+    def worker():
+        client = MiniRedis("127.0.0.1", port)
+        for _ in range(10):
+            client.incr("counter")
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = [pool.submit(worker) for _ in range(10)]
+    for f in futures:
+        f.result()                      # 스레드 안에서 난 예외를 여기서 드러내요
+
+    assert MiniRedis("127.0.0.1", port).get("counter") == "100"
