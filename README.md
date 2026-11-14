@@ -102,11 +102,11 @@ curl http://<서버 IP>:6380/health
 | 명령어 | args | 결과 |
 | --- | --- | --- |
 | `PING` | `[]` | `"PONG"` |
-| `SET` | `["key", "value"]` | `"OK"` (같은 key면 덮어써요) |
+| `SET` | `["key", "value"]` | `"OK"` (같은 key면 덮어써요. 세 번째 인자로 TTL을 줄 수 있어요 → [만료(TTL)](#만료ttl)) |
 | `GET` | `["key"]` | value, 없으면 `null` |
 | `DEL` | `["key"]` | 지웠으면 `1`, 없으면 `0` |
 | `EXISTS` | `["key"]` | 있으면 `1`, 없으면 `0` |
-| `DBSIZE` | `[]` | 저장된 key 개수 |
+| `DBSIZE` | `[]` | 저장된 key 개수 (아직 지워지지 않은 만료 key 포함) |
 
 ### 원자적 명령어
 
@@ -148,8 +148,8 @@ curl http://<서버 IP>:6380/health
 
 `INFO` 결과의 각 값은 아래와 같아요.
 
-- `size`: 저장된 key 개수예요. `DBSIZE`와 같아요.
-- `capacity`: 해시 테이블의 버킷 수예요. 처음엔 8이고, 가득 차기 전에 늘어나요.
+- `size`: 저장된 key 개수예요. `DBSIZE`와 같고, 아직 지워지지 않은 만료 key도 포함해요.
+- `capacity`: 해시 테이블의 버킷 수예요. 처음엔 8이고, 가득 차기 전에 늘어나요. 만료 key와 삭제 표시를 정리해서 절반 이하가 되면 늘리지 않고 같은 크기로 청소해요.
 - `tombstones`: `DEL`이나 만료로 지운 뒤 남아 있는 삭제 표시 버킷 수예요. 테이블이 커지거나 같은 크기로 청소되면 0으로 정리돼요.
 
 > ⚠️ `FLUSH`는 서버의 모든 데이터를 지워요. 같은 서버를 쓰는 다른 사람의 데이터도 지워지니, 쓰기 전에 알려 주세요.
@@ -170,7 +170,7 @@ curl http://<서버 IP>:6380/health
 | `INVALID_TTL` | 400 | `SET`의 세 번째 인자가 1 ~ 1728000 사이의 정수 문자열이 아닐 때 |
 | `VALUE_TOO_LARGE` | 413 | 요청 본문이 1MB를 넘을 때 |
 | `NOT_FOUND` | 404 | `/command`, `/health`가 아닌 경로일 때 |
-| `STORE_FULL` | 507 | 저장소가 최대 크기에 도달해 더 저장할 수 없을 때 |
+| `STORE_FULL` | 507 | 저장소가 최대 크기에 도달해, 만료 key와 삭제 표시를 정리해도 더 저장할 수 없을 때 |
 
 ## 6. 사용 예시
 
@@ -252,6 +252,10 @@ mini-redis> GET nothing
 (nil)
 mini-redis> EXISTS msg
 (integer) 1
+mini-redis> SET session abc 30
+"OK"
+mini-redis> TTL session
+(integer) 30
 mini-redis> GET
 (error) WRONG_ARGS GET은 인자 1개가 필요해요
 mini-redis> exit
