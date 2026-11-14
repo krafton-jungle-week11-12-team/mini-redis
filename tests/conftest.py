@@ -35,3 +35,15 @@ def base_url():
 def unused_port():
     """아무도 쓰지 않는 포트예요. 서버가 꺼져 있는 상황을 만들 때 써요."""
     return _free_port()
+
+
+class FakeClock:
+    """가짜 시계예요. 테스트에서 now를 바꿔 시간을 건너뛰어요. (Phase 4)"""
+
+    def __init__(self):
+        self.now = 0
+
+
+@pytest.fixture
+def clock():
+    return FakeClock()

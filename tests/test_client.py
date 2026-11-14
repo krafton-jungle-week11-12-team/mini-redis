@@ -1,5 +1,5 @@
 """클라이언트 테스트 (CLT). 테스트마다 빈 포트에 서버를 띄우고 MiniRedis로 요청해요.
-케이스 ID는 docs/test-cases/phase2/test-cases.md와 phase3/test-cases.md(CLT-08)를 따라요."""
+케이스 ID는 docs/test-cases/phase2/test-cases.md와 phase3/test-cases.md(CLT-08), phase4/test-cases.md(CLT-09)를 따라요."""
 
 import pytest
 
@@ -37,3 +37,8 @@ def test_clt04_server_down_raises_server_unavailable(unused_port):
 def test_clt08_mset_takes_dict_and_mget_returns_list(client):
     assert client.mset({"a": "1", "b": "2"}) == "OK"
     assert client.mget("a", "b", "c") == ["1", "2", None]
+
+
+def test_clt09_set_with_ttl_and_ttl(client):
+    assert client.set("k", "v", ttl=30) == "OK"     # 30을 "30"으로 보내요
+    assert client.ttl("k") == 30                    # 남은 시간을 올림해서 1초 안에는 30이에요
