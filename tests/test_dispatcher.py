@@ -1,6 +1,7 @@
 """명령어 테스트. HTTP 없이 dispatcher.execute를 바로 불러요.
-케이스 ID는 docs/test-cases/phase1/test-cases.md(VAL)와
-phase3/test-cases.md(MST, MGT, GTS, SNX, SXX, INC, DEC, ARG)를 따라요."""
+케이스 ID는 docs/test-cases/phase1/test-cases.md(VAL),
+phase3/test-cases.md(MST, MGT, GTS, SNX, SXX, INC, DEC, ARG),
+phase4/test-cases.md(STL, LZY, OVW, TTL, DBS, REG)를 따라요."""
 
 import pytest
 
@@ -25,7 +26,7 @@ def assert_error(result, status, code):
 
 @pytest.mark.parametrize("case_id, command, args", [
     ("VAL-01", "SET", []),
-    ("VAL-02", "SET", ["key1", "val1", "val2"]),
+    ("VAL-02", "SET", ["key1", "val1", "30", "x"]),   # 세 번째 인자는 TTL이라 4개로 확인해요 (REG-03)
     ("VAL-03", "SET", ["key1"]),
     ("VAL-04", "GET", []),
     ("VAL-05", "GET", ["key1", "key2"]),
@@ -386,3 +387,154 @@ def test_arg01_wrong_arg_count(command, args):
 ])
 def test_arg02_non_string_arg(command, args):
     assert_error(dispatcher.execute(command, args), 400, "WRONG_TYPE")
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 만료(TTL). 케이스 ID는 docs/test-cases/phase4/test-cases.md를 따라요.
+# REG-02(기존 테스트가 그대로 통과)는 위의 Phase 1 ~ 3 테스트 전체가 확인해요.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def clock(clock, monkeypatch):
+    """가짜 시계를 넣은 빈 저장소로 바꿔요. 테스트에서 clock.now를 바꿔 시간을 옮겨요."""
+    monkeypatch.setattr(dispatcher, "store", HashTable(clock=lambda: clock.now))
+    return clock
+
+
+# SET TTL 지정 ---------------------------------------------------------------
+
+def test_stl01_alive_until_expire_at_then_gone(clock):
+    run("SET", "key1", "val1", "10")
+    clock.now = 9.999
+    assert run("GET", "key1") == "val1"
+    clock.now = 10                               # now >= expire_at이면 만료
+    assert run("GET", "key1") is None
+
+
+def test_stl02_set_again_replaces_ttl(clock):
+    run("SET", "key1", "val1", "10")
+    assert run("SET", "key1", "val1", "100") == "OK"
+    clock.now = 50
+    assert run("TTL", "key1") == 50
+
+
+@pytest.mark.parametrize("ttl", ["1", "1728000"])
+def test_stl03_ttl_range_ends_are_stored(clock, ttl):
+    assert run("SET", "key1", "val1", ttl) == "OK"
+    assert run("TTL", "key1") == int(ttl)
+
+
+@pytest.mark.parametrize("ttl", [
+    "0", "1728001", "-1", "007", " 1", "+1", "1.5", "abc", "99999999999999",
+])
+def test_stl04_invalid_ttl_stores_nothing(clock, ttl):
+    assert_error(dispatcher.execute("SET", ["key1", "val1", ttl]), 400, "INVALID_TTL")
+    assert run("DBSIZE") == 0                    # 검사가 저장보다 먼저예요
+
+
+# 지연 만료 -------------------------------------------------------------------
+
+def test_lzy01_get_expired_key_becomes_tombstone(clock):
+    run("SET", "key1", "val1", "10")
+    clock.now = 10
+    assert run("GET", "key1") is None
+    assert info()["size"] == 0
+    assert info()["tombstones"] == 1             # size + tombstones는 그대로예요
+
+
+@pytest.mark.parametrize("command, args, expected", [
+    ("EXISTS", ["key1"], 0),
+    ("DEL", ["key1"], 0),
+    ("SETNX", ["key1", "x"], 1),
+    ("SETXX", ["key1", "x"], 0),
+    ("GETSET", ["key1", "x"], None),
+    ("INCR", ["key1"], 1),
+    ("MGET", ["key1"], [None]),
+    ("TTL", ["key1"], -2),
+])
+def test_lzy03_expired_key_is_missing_for_every_command(clock, command, args, expected):
+    run("SET", "key1", "val1", "10")
+    clock.now = 10
+    assert run(command, *args) == expected
+
+
+@pytest.mark.parametrize("command, args", [
+    ("SETNX", ["key1", "val2"]),
+    ("INCR", ["key1"]),
+])
+def test_lzy04_new_key_in_expired_slot_has_no_old_ttl(clock, command, args):
+    run("SET", "key1", "val1", "10")
+    clock.now = 10
+    run(command, *args)
+    assert run("TTL", "key1") == -1
+
+
+# 덮어쓰기와 TTL ---------------------------------------------------------------
+
+@pytest.mark.parametrize("command, args", [
+    ("SET", ["key1", "val2"]),
+    ("GETSET", ["key1", "val2"]),
+    ("SETXX", ["key1", "val2"]),
+    ("MSET", ["key1", "val2"]),
+])
+def test_ovw01_overwrite_clears_ttl(clock, command, args):
+    run("SET", "key1", "val1", "10")
+    run(command, *args)
+    assert run("TTL", "key1") == -1
+
+
+@pytest.mark.parametrize("command", ["INCR", "DECR"])
+def test_ovw02_incr_decr_keep_ttl(clock, command):
+    run("SET", "key1", "1", "10")
+    run(command, "key1")
+    assert run("TTL", "key1") == 10
+
+
+# TTL ---------------------------------------------------------------------------
+
+def test_ttl01_remaining_time_rounds_up(clock):
+    run("SET", "key1", "val1", "10")
+    clock.now = 0.6
+    assert run("TTL", "key1") == 10              # 남은 9.4초
+    clock.now = 9.999
+    assert run("TTL", "key1") == 1               # 살아 있는 key는 0으로 보이지 않아요
+
+
+def test_ttl02_no_expiry_is_minus_one(clock):
+    run("SET", "key1", "val1")
+    assert run("TTL", "key1") == -1
+
+
+def test_ttl03_missing_key_is_minus_two(clock):
+    assert run("TTL", "key1") == -2
+
+
+@pytest.mark.parametrize("args", [[], ["key1", "key2"]])
+def test_ttl04_wrong_arg_count(clock, args):
+    assert_error(dispatcher.execute("TTL", args), 400, "WRONG_ARGS")
+
+
+# DBSIZE ------------------------------------------------------------------------
+
+def test_dbs02_expired_key_counted_until_cleaned(clock):
+    run("SET", "key1", "val1", "10")
+    run("SET", "key2", "val2")
+    clock.now = 10
+    assert run("DBSIZE") == 2                    # 아무도 조회하지 않아 OCCUPIED로 남아요
+    assert run("GET", "key1") is None
+    assert run("DBSIZE") == 1
+
+
+# 회귀 --------------------------------------------------------------------------
+
+def test_reg03_third_set_arg_is_ttl(clock):
+    assert_error(dispatcher.execute("SET", ["key1", "val1", "val2"]), 400, "INVALID_TTL")
+    assert_error(dispatcher.execute("SET", ["key1", "val1", "30", "x"]), 400, "WRONG_ARGS")
+
+
+def test_reg04_flush_keeps_clock(clock):
+    run("SET", "key1", "val1")
+    run("FLUSH")
+    run("SET", "key1", "val1", "10")
+    clock.now = 10                               # 실제 시계로 바뀌었다면 값이 남아요
+    assert run("GET", "key1") is None

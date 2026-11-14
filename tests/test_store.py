@@ -1,5 +1,5 @@
 """해시 테이블(store.py) 테스트. 케이스 ID는 docs/test-cases/phase1/test-cases.md와
-phase3/test-cases.md(ENS, WRT, REG)를 따라요.
+phase3/test-cases.md(ENS, WRT, REG), phase4/test-cases.md(LZY-02, CLN)를 따라요.
 
 표기법
 - fill N: key1~keyN을 val1~valN으로 차례로 저장
@@ -349,3 +349,68 @@ def test_wrt03_write_to_tombstone_bucket(table, fix_hash):
     assert table.get("key1") == "val1"
     assert table.size == 2
     assert table.tombstones == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 만료. 케이스 ID는 docs/test-cases/phase4/test-cases.md(LZY-02, CLN)를 따라요.
+# clock.now를 바꿔 시간을 옮겨요. fill_ttl은 표기법의 "fill N (keyA ~ keyB TTL T)"예요.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def ttl_table(clock):
+    return HashTable(clock=lambda: clock.now)
+
+
+def fill_ttl(table, n, ttl_until, ttl=10):
+    """key1~keyN을 저장하고, key1~key{ttl_until}만 TTL ttl초로 저장해요."""
+    for k in range(1, n + 1):
+        table.set(f"key{k}", f"val{k}", ttl if k <= ttl_until else None)
+
+
+def test_lzy02_find_key_pushed_behind_expired_key(ttl_table, clock, fix_hash):
+    fix_hash["key1"] = 1
+    fix_hash["key2"] = 1
+    fill_ttl(ttl_table, 2, ttl_until=1)         # key1 → 1번(TTL 10), key2 → 2번
+    clock.now = 10
+    assert ttl_table.get("key2") == "val2"
+    assert ttl_table.buckets[1].state == State.TOMBSTONE   # EMPTY면 탐사가 끊겨요
+
+
+def test_cln01_drop_expired_then_clean_at_same_size(ttl_table, clock):
+    fill_ttl(ttl_table, 6, ttl_until=3)
+    clock.now = 10
+    ttl_table.set("key7", "val7")               # live 3 → (3 + 1) / 8 = 0.5
+    assert info(ttl_table) == {"size": 4, "capacity": 8, "tombstones": 0}
+    assert ttl_table.get("key1") is None
+
+
+def test_cln02_tombstones_only_clean_at_same_size(ttl_table):
+    fill(ttl_table, 6)
+    for k in range(1, 6):
+        ttl_table.delete(f"key{k}")
+    ttl_table.set("key7", "val7")               # live 1 → (1 + 1) / 8 <= 0.5
+    assert info(ttl_table) == {"size": 2, "capacity": 8, "tombstones": 0}
+
+
+def test_cln03_resize_when_still_over_half(ttl_table, clock):
+    fill_ttl(ttl_table, 6, ttl_until=2)
+    clock.now = 10
+    ttl_table.set("key7", "val7")               # live 4 → (4 + 1) / 8 > 0.5
+    assert info(ttl_table) == {"size": 5, "capacity": 16, "tombstones": 0}
+
+
+def test_cln04_resize_keeps_expire_at(ttl_table, clock):
+    fill_ttl(ttl_table, 7, ttl_until=1)
+    assert ttl_table.capacity == 16
+    assert ttl_table.ttl("key1") == 10
+    clock.now = 10
+    assert ttl_table.get("key1") is None
+
+
+def test_cln05_store_when_cleaning_makes_room_at_max(ttl_table, clock, monkeypatch):
+    monkeypatch.setattr(store_module, "MAX_CAPACITY", 8)
+    fill_ttl(ttl_table, 6, ttl_until=1)
+    clock.now = 10
+    ttl_table.set("key7", "val7")               # live 5 → (5 + 1) / 8 = 0.75, STORE_FULL 아님
+    assert ttl_table.capacity == 8
+    assert ttl_table.size == 6
