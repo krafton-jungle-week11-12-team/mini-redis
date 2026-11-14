@@ -132,7 +132,7 @@ python -m mini_redis.cli --host 192.168.0.5 --port 6380
 mini-redis> SET msg "hello world"
 ```
 
-1. 프롬프트 `mini-redis> `로 한 줄을 읽어요.
+1. 프롬프트 `mini-redis> `로 한 줄을 읽어요. `readline`을 import해 두어서 ↑↓ 키로 이전 입력을 불러오고 ←→ 키로 커서를 옮길 수 있어요. Windows처럼 `readline`이 없으면 이 기능만 빠지고 CLI는 그대로 동작해요.
 2. `shlex.split`으로 잘라요. 공백으로 나누고, 따옴표로 감싼 부분은 하나로 묶어요. (R-34, R-35) → `["SET", "msg", "hello world"]`
 3. 빈 줄이면 아무것도 하지 않고 다음 입력을 받아요.
 4. 첫 단어가 `exit` 또는 `quit`(대소문자 무관)이면 종료해요. (R-38)
