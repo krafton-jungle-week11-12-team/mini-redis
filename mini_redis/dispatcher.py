@@ -38,6 +38,10 @@ def cmd_dbsize(args):
     return ok_response(store.size)
 
 
+def cmd_flush(args):
+    return ok_response(store.flush())           # 지운 개수
+
+
 def cmd_info(args):
     return ok_response({"size": store.size, "capacity": store.capacity, "tombstones": store.tombstones})
 
@@ -51,6 +55,7 @@ COMMANDS = {
     "EXISTS": (cmd_exists, 1),
     "DBSIZE": (cmd_dbsize, 0),
     "INFO": (cmd_info, 0),
+    "FLUSH": (cmd_flush, 0),
 }
 
 
