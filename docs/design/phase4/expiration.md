@@ -1,45 +1,64 @@
 # 만료 설계
 
-이 문서를 읽으면 Phase 4에서 key에 보관 기간(TTL)을 붙이고, 만료된 key를 언제 어떻게 지우는지 알 수 있어요. 버킷 필드, `_probe` 변경, 확장·청소 규칙, 명령어별 TTL 처리, dispatcher 변경을 그대로 따라 `mini_redis/store.py`와 `mini_redis/dispatcher.py`를 구현할 수 있어요.
+이 문서를 읽으면 Phase 4에서 key에 보관 기간(TTL)을 붙이고, 만료된 key를 언제 어떻게 지우는지 알 수 있어요. 버킷 필드, `_probe` 변경, 확장·청소 규칙, 명령어별 TTL 처리, TTL 명령어, dispatcher 변경을 그대로 따라 `mini_redis/store.py`와 `mini_redis/dispatcher.py`를 구현할 수 있어요.
 
-Phase 4 요구사항 명세서는 아직 작성 중이에요([#21](https://github.com/krafton-jungle-week11-12-team/mini-redis/issues/21)). 요구사항 ID가 정해지면 각 절에 붙여요. 해시 테이블 구조는 [해시 테이블 설계](../phase1/hash-table.md)를, 공통 함수(`_ensure_capacity`, `_write`)는 [원자적 명령어 설계](../phase3/atomic-commands.md)를 바탕으로 바꿔요.
+요구사항은 [Phase 4 요구사항 명세서](../../requirements/phase4/phase4_requirement.md)의 1차 범위(R-51 ~ R-70)를 기준으로 해요. 해시 테이블 구조는 [해시 테이블 설계](../phase1/hash-table.md)를, 공통 함수(`_ensure_capacity`, `_write`)는 [원자적 명령어 설계](../phase3/atomic-commands.md)를 바탕으로 바꿔요.
 
 ## 다루는 범위
 
-| 분류 | 내용 | 이 문서 |
-| --- | --- | --- |
-| TTL 저장 | `SET key value ttl`, 버킷의 `expire_at` | ✅ |
-| 지연 만료 | 탐사 중 만난 만료 key를 `TOMBSTONE`으로 바꿈 | ✅ |
-| 확장 전 정리 | 확장 전에 만료 key를 지우고, 필요하면 같은 크기로 청소 | ✅ |
-| 명령어별 TTL | 값을 바꾸는 명령어가 TTL을 유지할지 지울지 | ✅ |
-| TTL 조회·변경 명령어 | `TTL`, `EXPIRE`, `PERSIST` | 요구사항이 정해지면 다뤄요 |
-| 능동 만료 | 접근하지 않아도 주기적으로 지우기 | 다루지 않아요 |
+| 분류 | 내용 | 요구사항 | 이 문서 |
+| --- | --- | --- | --- |
+| 만료 | `SET key value ttl`, 만료 시각 계산·재지정 | R-51 ~ R-55 | ✅ (R-54는 [결정 사항](#결정-사항) 참고) |
+| 버킷 필드 | `expire_at`, 만료 없음은 `None` | R-56, R-57 | ✅ |
+| 지연 만료 | 탐사 중 만난 만료 key를 `TOMBSTONE`으로 바꿈 | R-58 ~ R-61 | ✅ |
+| 덮어쓰기 | 값을 바꾸는 명령어가 TTL을 유지할지 지울지 | R-62 ~ R-64 | ✅ |
+| TTL | `TTL key`로 남은 시간 조회 | R-65 | ✅ |
+| 리해싱 | 확장 전에 만료 key를 지우고, 필요하면 같은 크기로 청소 | R-66 ~ R-69 | ✅ |
+| DBSIZE | 정리 전 만료 key 포함 허용 | R-70 | ✅ |
+| 만료 청소기 | 접근하지 않아도 주기적으로 지우기 | R-71 ~ R-80 | 2차 범위라 다루지 않아요 |
 
 ## 결정 사항
 
 | 항목 | 선택 | 이유 |
 | --- | --- | --- |
-| TTL 지정 방법 | `SET key value ttl` (세 번째 인자) | 실제 Redis의 `SET key value EX 30`보다 옵션 해석이 필요 없어요. |
-| TTL 단위·범위 | 초 단위 정수, 1 ~ 1,728,000 (20일) | 0초는 "넣자마자 삭제"라 의미가 없어요. 상한이 없으면 아주 큰 수에서 시각 계산이 의미를 잃어요. |
-| TTL 형식 | `[1-9][0-9]{0,6}` 전체 일치 | `int()`는 `" 1"`, `"+1"`, `"1_000"`도 받아들여요. 앞자리 0(`"007"`)도 실제 Redis처럼 거부해요. 7자리 제한으로 아주 긴 숫자를 `int()`로 바꾸지 않아요. |
+| TTL 지정 방법 (R-51) | `SET key value ttl` (세 번째 인자) | 실제 Redis의 `SET key value EX 30`보다 옵션 해석이 필요 없어요. |
+| TTL 단위·범위 (R-52) | 초 단위 정수, 1 ~ 1,728,000 (20일) | 0초는 "넣자마자 삭제"라 의미가 없어요. 상한이 없으면 아주 큰 수에서 시각 계산이 의미를 잃어요. |
+| TTL 형식 (R-52) | `[1-9][0-9]{0,6}` 전체 일치 | `int()`는 `" 1"`, `"+1"`, `"1_000"`도 받아들여요. 앞자리 0(`"007"`)도 실제 Redis처럼 거부해요. 7자리 제한으로 아주 긴 숫자를 `int()`로 바꾸지 않아요. |
+| 만료 시각 형식 (R-54) | **요구사항과 달라요.** `YYYY-MM-DD HH:MM:SS` 문자열 대신 `time.monotonic` 기준 초(`float`) | 아래 [만료 시각 형식](#만료-시각-형식-r-54)에서 설명해요. R-54 수정을 제안해요. |
+| 만료 없음 값 (R-57) | `None` | `-1`이나 `0`은 실제 시각 값과 섞일 수 있어요. `None`은 `expire_at is None` 한 번으로 구분돼요. |
 | 시계 | `time.monotonic`, `HashTable(clock=...)`으로 주입 | 시스템 시간을 바꿔도 만료가 흔들리지 않아요. 테스트는 가짜 시계로 시간을 건너뛰어요. |
 | 시각 계산 | 명령어 하나에서 `now`를 한 번만 구해요 | 한 명령어 안에서 만료 판정 기준이 일정해요. |
-| 만료 판정 | `now >= expire_at` | TTL 10초면 정확히 10초 뒤부터 없는 key예요. |
-| 만료 key 정리 위치 | `_probe` 안에서 `TOMBSTONE`으로 바꿔요 | `_probe`를 쓰는 모든 명령어가 고치지 않아도 만료 key를 없는 key로 봐요. |
-| TTL 유지 | INCR·DECR만 유지, 나머지 덮어쓰기는 지움 | 실제 Redis와 같아요. |
-| `size`·DBSIZE | 근사값 | 아무도 접근하지 않은 만료 key는 다음 탐사·청소 전까지 `size`에 남아요. 실제 Redis의 DBSIZE도 같아요. |
-| 확장 기준 | 기존과 같이 `(size + tombstones + extra) / capacity > 0.75` 하나 | 별도 TOMBSTONE 비율 조건을 두지 않아요. GET이 rehash를 일으키지 않아요. |
-| 크기 결정 | 만료를 뺀 실제 key 수로 2배 확장 또는 같은 크기 청소 | TOMBSTONE과 만료 key 때문에 테이블이 끝없이 커지는 문제를 막아요. |
+| 만료 판정 (R-59) | `now >= expire_at` | TTL 10초면 정확히 10초 뒤부터 없는 key예요. |
+| 만료 key 정리 위치 (R-58, R-60) | `_probe` 안에서 `TOMBSTONE`으로 바꿔요 | `_probe`를 쓰는 모든 명령어가 고치지 않아도 만료 key를 없는 key로 봐요. |
+| TTL 유지 (R-62 ~ R-64) | INCR·DECR만 유지, 나머지 덮어쓰기는 지움 | 실제 Redis와 같아요. |
+| TTL 응답 (R-65) | key 없음·만료 `-2`, 만료 없음 `-1`, 남은 시간은 올림 | 실제 Redis와 같은 값이에요. 살아 있는 key가 `0`으로 보이지 않게 올림해요. |
+| `size`·DBSIZE (R-70) | 근사값 | 아무도 접근하지 않은 만료 key는 다음 탐사·청소 전까지 `size`에 남아요. 실제 Redis의 DBSIZE도 같아요. |
+| 확장 기준 (R-66) | 기존과 같이 `(size + tombstones + extra) / capacity > 0.75` 하나 | 별도 TOMBSTONE 비율 조건을 두지 않아요. GET이 rehash를 일으키지 않아요. |
+| 크기 결정 (R-67, R-68) | 만료를 뺀 실제 key 수로 2배 확장 또는 같은 크기 청소 | TOMBSTONE과 만료 key 때문에 테이블이 끝없이 커지는 문제를 막아요. |
+
+### 만료 시각 형식 (R-54)
+
+R-54는 만료 시각을 `YYYY-MM-DD HH:MM:SS` 형식으로 저장한다고 정했어요. 이 설계는 `time.monotonic()`이 돌려주는 초(`float`)로 저장해요.
+
+| 비교 | `YYYY-MM-DD HH:MM:SS` | `time.monotonic` 초 |
+| --- | --- | --- |
+| 만료 판정 | 탐사할 때마다 문자열을 시각으로 바꿔서 비교해야 해요 | `now >= expire_at` 숫자 비교 한 번이에요 |
+| 초 단위 정밀도 | 초 미만이 잘려서 TTL 10초가 9.x초 뒤에 만료될 수 있어요 | 잘리지 않아요 |
+| 시스템 시간 변경 | 시계를 맞추거나(NTP) 바꾸면 만료가 앞당겨지거나 늦어져요 | 영향을 받지 않아요 |
+| 시간대 (UTC / 로컬) | 정해야 해요 | 필요 없어요 |
+| 사람이 읽기 | 쉬워요 | 어려워요. 필요하면 TTL 명령어(R-65)로 남은 시간을 봐요 |
+
+그래서 R-54를 "만료 시각을 현재 시각과 비교할 수 있는 값으로 저장한다"로 바꾸는 걸 제안해요. 날짜 형식이 필요한 곳은 영속성(Phase 6)인데, 그때 저장 파일에 쓸 형식을 따로 정해요. ([다음 설계로 넘기는 것](#다음-설계로-넘기는-것))
 
 ## 자료구조
 
 ### Bucket
 
-`expire_at` 필드를 추가하고, TTL을 다루는 메서드 두 개를 추가해요.
+`expire_at` 필드를 추가하고, TTL을 다루는 메서드 두 개를 추가해요. (R-56, R-57)
 
 | 필드 | 타입 | 뜻 |
 | --- | --- | --- |
-| `expire_at` | `float` 또는 `None` | 만료 시각이에요. `clock()`과 같은 기준의 초 단위 값이에요. `None`이면 만료가 없어요. (예: `now`가 `1000.0`일 때 TTL 30초 → `1030.0`) |
+| `expire_at` | `float` 또는 `None` | 만료 시각이에요. (R-53) `clock()`과 같은 기준의 초 단위 값이에요. `None`이면 만료가 없어요. (예: `now`가 `1000.0`일 때 TTL 30초 → `1030.0`) |
 
 ```python
 class Bucket:
@@ -79,6 +98,7 @@ class Bucket:
 ```
 
 - **`fill`은 TTL을 건드리지 않아요.** 값만 바꾸는 INCR이 TTL을 날리는 일이 구조적으로 생기지 않아요. TTL을 바꿔야 하는 명령어는 `set_ttl`을 직접 불러요.
+- **`set_ttl`은 기존 만료 시각을 덮어써요.** 이미 TTL이 있는 key에 `SET key value 60`을 다시 하면 새 시각으로 바뀌어요. (R-55)
 - **`set_ttl`은 `now`를 인자로 받아요.** Bucket이 `time.monotonic()`을 직접 부르면 테스트에서 가짜 시계를 쓸 수 없어요.
 - **`OCCUPIED`가 아닌 버킷의 `expire_at`은 항상 `None`이에요.** 새 버킷은 `None`으로 시작하고, `mark_deleted`가 `None`으로 되돌려요. 그래서 빈 자리에 새 key를 `fill`하면 이전 key의 TTL이 따라오지 않아요.
 
@@ -115,7 +135,7 @@ def flush(self):
     return removed
 ```
 
-## 지연 만료: _probe
+## 지연 만료: _probe (R-58 ~ R-60)
 
 탐사 중에 만료된 `OCCUPIED` 버킷을 만나면 그 자리에서 `TOMBSTONE`으로 바꿔요. 찾던 key인지와 상관없이 지나가는 길의 만료 key를 모두 바꿔요.
 
@@ -172,7 +192,7 @@ TTL 10초로 SET (now = 0)
 - **GET도 상태를 바꿔요.** 서버가 단일 스레드라 문제없어요. ([원자성을 지키는 방법](../phase3/atomic-commands.md#원자성을-지키는-방법-r-41))
 - **탐사 경로가 짧아지지는 않아요.** `TOMBSTONE`도 지나가야 해요. 경로는 아래 확장·청소 때 짧아져요.
 
-### 만료 key는 모든 명령어에서 없는 key예요
+### 만료 key는 모든 명령어에서 없는 key예요 (R-61)
 
 모든 명령어가 `_probe`를 거치므로, 만료 key는 `found`가 `None`으로 나와요. 명령어 코드를 따로 고치지 않아도 아래처럼 동작해요.
 
@@ -186,6 +206,7 @@ TTL 10초로 SET (now = 0)
 | SETXX | `0` (저장 안 함) | ✅ |
 | INCR·DECR | `0`에서 시작, TTL 없음 | ✅ |
 | MGET | 해당 위치 nil | ✅ |
+| TTL | `-2` | ✅ |
 
 ```
 > SET session abc 10
@@ -196,7 +217,7 @@ TTL 10초로 SET (now = 0)
 > SETNX session xyz    → (integer) 1
 ```
 
-## 확장 전 정리: _ensure_capacity
+## 확장 전 정리: _ensure_capacity (R-66 ~ R-68)
 
 ### 지금 구조의 문제
 
@@ -215,8 +236,8 @@ TTL이 들어오면 만료 key도 `TOMBSTONE`이 되므로 이 상황이 훨씬 
 
 1. `(size + tombstones + extra) / capacity <= 0.75`이면 아무것도 하지 않고 끝내요. (기존과 같아요)
 2. `live`를 세요. `OCCUPIED`이면서 만료되지 않은 버킷 수예요. 세기만 하고 아무것도 바꾸지 않아요.
-3. `(live + extra) / capacity <= 0.5`이면 → **같은 크기로 청소**해요.
-4. 아니면 → 기존처럼 `(live + extra) / 새 크기 <= 0.75`가 될 때까지 2배씩 늘려요.
+3. `(live + extra) / capacity <= 0.5`이면 → **같은 크기로 청소**해요. (R-67)
+4. 아니면 → 기존처럼 `(live + extra) / 새 크기 <= 0.75`가 될 때까지 2배씩 늘려요. (R-68)
 5. 새 크기가 `MAX_CAPACITY`를 넘으면:
    - `(live + extra) / capacity <= 0.75`이면 → 키울 수는 없지만 청소하면 들어가요. 같은 크기로 청소해요.
    - 아니면 → `StoreFullError`를 던져요. 아직 아무것도 바꾸지 않았어요.
@@ -255,10 +276,11 @@ def _ensure_capacity(self, extra, now=None):
 
 - **같은 크기 기준이 0.5인 이유**: 청소 뒤 적재율이 0.5 이하라서, 다음 청소까지 최소 `capacity / 4`번은 새 key를 넣을 수 있어요. O(n) 청소가 연달아 일어나지 않아서 분할 상환하면 삽입당 O(1)이에요. 0.5 ~ 0.75 사이면 2배로 키워서 적재율을 0.375 이하로 낮춰요.
 - **`MAX_CAPACITY`에서의 청소**: 0.5 ~ 0.75 사이에서는 청소 뒤에도 여유가 적어서 청소가 자주 일어날 수 있어요. 저장소가 거의 찬 상황이라 `STORE_FULL`보다 낫다고 보고 감수해요.
-- **`live`를 세는 비용은 O(n)이에요.** 확장 기준을 넘었을 때만 세고, 어차피 뒤이은 `_resize`도 O(n)이에요.
+- **`live`를 세는 비용은 O(n)이에요.** 확장 기준을 넘었을 때만 세고, 어차피 뒤이은 `_resize`도 O(n)이에요. (R-66 비고)
+- **R-66의 "삭제"는 `_resize`에서 일어나요.** 만료 key를 먼저 `TOMBSTONE`으로 바꾸고 다시 옮기면 전체 순회가 한 번 더 필요해요. 그래서 2번에서 세기만 하고, 6번 `_resize`에서 만료 key를 옮기지 않는 방식으로 삭제해요.
 - **`now`는 선택 인자예요.** 명령어는 자기가 구한 `now`를 넘기고, 기존 테스트처럼 `_ensure_capacity(7)`만 불러도 동작해요.
 
-### _resize
+### _resize (R-69)
 
 `OCCUPIED`이면서 만료되지 않은 버킷만 옮겨요. `TOMBSTONE`과 만료 key는 버려요.
 
@@ -283,7 +305,7 @@ def _resize(self, new_capacity, now):
 - **`expire_at`을 그대로 옮겨요.** `fill`은 TTL을 건드리지 않으므로 직접 복사해요. 빠뜨리면 확장할 때마다 모든 TTL이 사라져요.
 - 청소가 끝나면 `size`가 실제 key 수와 같아지고 `tombstones`는 0이 돼요. `size`가 정확해지는 시점이에요.
 
-## 명령어별 TTL 처리
+## 명령어별 TTL 처리 (R-62 ~ R-64)
 
 ### _write
 
@@ -306,16 +328,16 @@ def _write(self, found, insert_at, key, value):
 
 TTL을 지우는 명령어는 `set_ttl(now, None)`을 **직접** 불러요. "덮어쓰면 TTL이 지워진다"는 규칙이 `fill` 안에 숨지 않고 명령어 코드에 드러나서, 이 표와 코드를 한 줄씩 맞춰 볼 수 있어요.
 
-| 명령어 | `fill` | `set_ttl` | TTL 결과 |
-| --- | --- | --- | --- |
-| `SET k v` | O | `set_ttl(now, None)` | 지워요 |
-| `SET k v 30` | O | `set_ttl(now, 30)` | 30초 |
-| GETSET | O | `set_ttl(now, None)` | 지워요 |
-| SETXX (성공) | O | `set_ttl(now, None)` | 지워요 |
-| MSET | O | key마다 `set_ttl(now, None)` | 지워요 |
-| SETNX (성공) | O | 부르지 않아요 | 없음 (새 key라 `expire_at`이 이미 `None`) |
-| INCR·DECR (기존 key) | O | **부르지 않아요** | **유지** |
-| INCR·DECR (새 key) | O | 부르지 않아요 | 없음 |
+| 명령어 | `fill` | `set_ttl` | TTL 결과 | 요구사항 |
+| --- | --- | --- | --- | --- |
+| `SET k v` | O | `set_ttl(now, None)` | 지워요 | R-62 |
+| `SET k v 30` | O | `set_ttl(now, 30)` | 30초 | R-51, R-55 |
+| GETSET | O | `set_ttl(now, None)` | 지워요 | R-63 |
+| SETXX (성공) | O | `set_ttl(now, None)` | 지워요 | R-63 |
+| MSET | O | key마다 `set_ttl(now, None)` | 지워요 | R-63 |
+| SETNX (성공) | O | 부르지 않아요 | 없음 (새 key라 `expire_at`이 이미 `None`) | R-57 |
+| INCR·DECR (기존 key) | O | **부르지 않아요** | **유지** | R-64 |
+| INCR·DECR (새 key) | O | 부르지 않아요 | 없음 | R-57 |
 
 ```
 > SET views 10 60
@@ -375,7 +397,47 @@ def delete(self, key):
 
 SETNX와 INCR·DECR은 `now`를 구해서 `_ensure_capacity`, `_probe`에 넘기는 것 말고는 바뀌지 않아요. GET, EXISTS, MGET은 바뀌지 않아요. `_probe`가 알아서 `now`를 구해요.
 
-## size는 근사값이에요
+## TTL 명령어 (R-65)
+
+`TTL key`로 남은 만료 시간을 초 단위 정수로 돌려줘요.
+
+1. `now`를 구하고 `_probe(key, now)`로 `found`를 받아요. 만료 key는 이때 `TOMBSTONE`이 되고 `found`가 `None`이에요.
+2. `found`가 없으면 → `-2`를 반환해요. 없는 key와 만료된 key가 같아요. (R-61)
+3. `expire_at`이 `None`이면 → `-1`을 반환해요.
+4. 아니면 → `expire_at - now`를 올림해서 반환해요.
+
+```python
+import math
+
+
+def ttl(self, key):
+    now = self.clock()
+    found, _ = self._probe(key, now)
+    if found is None:
+        return -2
+    expire_at = self.buckets[found].expire_at
+    if expire_at is None:
+        return -1
+    return math.ceil(expire_at - now)
+```
+
+```
+> SET k v 10            (now = 0)
+> TTL k                 → (integer) 10     # now = 0.6, 남은 9.4초 → 10
+> TTL k                 → (integer) 1      # now = 9.999
+> TTL k                 → (integer) -2     # now = 10, 만료
+> SET p v
+> TTL p                 → (integer) -1
+> TTL nothing           → (integer) -2
+```
+
+| 결정 | 이유 |
+| --- | --- |
+| 만료된 key는 nil이 아니라 `-2` | R-65 비고에서 설계에 맡긴 부분이에요. 응답 타입이 항상 정수라서 클라이언트가 분기하기 쉬워요. 실제 Redis와 같아요. |
+| 남은 시간은 올림 | 4번에 오는 key는 아직 만료되지 않아서 `expire_at - now > 0`이에요. 올림하면 항상 1 이상이라, 살아 있는 key가 `0`으로 보이지 않아요. 실제 Redis는 반올림이라 0.5초 미만이면 `0`을 보여줘요. |
+| `-2`, `-1`이 TTL 값과 겹치지 않아요 | TTL은 최소 1초(R-52)이고 남은 시간은 올림해서 1 이상이에요. |
+
+## size는 근사값이에요 (R-70)
 
 `size`(DBSIZE, INFO)는 아직 정리되지 않은 만료 key를 포함해요.
 
@@ -396,9 +458,9 @@ SETNX와 INCR·DECR은 `now`를 구해서 `_ensure_capacity`, `_probe`에 넘기
 
 [오류 코드](../phase1/hash-table.md#오류-코드)에 하나를 추가해요. 응답 형식은 같아요.
 
-| 코드 | HTTP 상태 | 언제 | 검사 위치 |
-| --- | --- | --- | --- |
-| `INVALID_TTL` | 400 | SET의 세 번째 인자가 1 ~ 1,728,000 사이의 정수 형식이 아닐 때 | `dispatcher.py` |
+| 코드 | HTTP 상태 | 언제 | 검사 위치 | 근거 |
+| --- | --- | --- | --- | --- |
+| `INVALID_TTL` | 400 | SET의 세 번째 인자가 1 ~ 1,728,000 사이의 정수 형식이 아닐 때 | `dispatcher.py` | R-52 |
 
 | 입력 | 결과 |
 | --- | --- |
@@ -411,15 +473,21 @@ SETNX와 INCR·DECR은 `now`를 구해서 `_ensure_capacity`, `_probe`에 넘기
 
 ## dispatcher 연결
 
-### SET 인자 개수
+### 명령어 테이블
 
-SET의 인자 개수를 2에서 2 ~ 3으로 바꿔요. 세 번째 인자는 key가 아니므로 `keys`는 그대로 `FIRST`예요.
+SET의 인자 개수를 2에서 2 ~ 3으로 바꾸고(R-51), TTL을 추가해요(R-65). SET의 세 번째 인자는 key가 아니므로 `keys`는 그대로 `FIRST`예요.
 
 ```python
 "SET":    Command(cmd_set, 2, 3, FIRST),
+"TTL":    Command(cmd_ttl, 1, 1, FIRST),
 ```
 
-### TTL 검사
+```python
+def cmd_ttl(args):
+    return ok_response(store.ttl(args[0]))      # 남은 초, -1, -2
+```
+
+### TTL 검사 (R-52)
 
 Phase 1 설계에서 "숫자 인자를 받는 명령어가 생기면 그 명령어만 따로 검사한다"고 했던 부분이에요. ([dispatcher 연결](../phase1/hash-table.md#dispatcher-연결)) `execute`의 공통 검사(1 ~ 4번)를 통과한 뒤 `cmd_set`에서 검사해요. 검사가 저장보다 먼저라서, 실패하면 아무것도 저장하지 않아요.
 
@@ -461,14 +529,16 @@ def cmd_set(args):
 | 명령어 | 인자 개수 | 성공 응답 `result` |
 | --- | --- | --- |
 | `SET` | 2 ~ 3 | `"OK"` |
+| `TTL` | 1 | 남은 초(정수), 만료 없음 `-1`, key 없음 `-2` |
 
 ## 클라이언트 · CLI
 
-[클라이언트 · CLI 설계](../phase2/client.md)의 `set`에 `ttl`을 추가해요.
+[클라이언트 · CLI 설계](../phase2/client.md)의 `set`에 `ttl`을 추가하고, `ttl` 메서드를 추가해요.
 
 | 메서드 | 보내는 명령어 | 반환값 |
 | --- | --- | --- |
 | `set(key, value, ttl=None)` | `SET key value` 또는 `SET key value ttl` | `"OK"` |
+| `ttl(key)` | `TTL key` | 정수 |
 
 ```python
 def set(self, key, value, ttl=None):
@@ -477,7 +547,12 @@ def set(self, key, value, ttl=None):
     return self.execute("SET", key, value, str(ttl))     # 30 → "30"
 ```
 
-CLI는 입력을 모두 문자열로 보내므로 바꾸지 않아요. `SET session abc 30`을 그대로 입력하면 돼요.
+```python
+def ttl(self, key):
+    return self.execute("TTL", key)
+```
+
+CLI는 입력을 모두 문자열로 보내고 정수 응답도 이미 출력하므로 바꾸지 않아요. `SET session abc 30`, `TTL session`을 그대로 입력하면 돼요.
 
 ## 기존 테스트에 미치는 영향
 
@@ -491,6 +566,9 @@ CLI는 입력을 모두 문자열로 보내므로 바꾸지 않아요. `SET sess
 
 ## 다음 설계로 넘기는 것
 
-- **TTL·EXPIRE·PERSIST 명령어**: 요구사항(#21)에 들어가면 다뤄요. `remaining = expire_at - now`로 남은 시간을 구하고, 실제 Redis는 key 없음을 `-2`, 만료 없음을 `-1`로 응답해요. EXPIRE·PERSIST는 `_probe` 뒤 `set_ttl`만 부르면 돼요.
-- **능동 만료**: 실제 Redis는 TTL이 있는 key 몇 개를 주기적으로 골라 지워요. 이 설계는 단일 스레드 HTTP 서버라 주기 작업이 없어서, 그 역할을 확장 전 정리가 대신해요.
-- **영속성 (Phase 6)**: `time.monotonic`은 프로세스가 다시 시작되면 기준이 바뀌어요. 저장한 데이터를 다시 읽을 때 TTL을 이어 가려면 `time.time` 기준 시각으로 저장하는 방법을 검토해요.
+- **만료 청소기 (R-71 ~ R-80, 2차)**: 1차에서는 아무도 조회하지 않는 만료 key를 확장 전 정리(R-66 ~ R-68)가 대신 지워요. 2차에서 다룰 때 정할 것이에요.
+  - 만료 key 목록(R-72): TTL이 있는 key를 따로 관리해야 무작위로 고를 수 있어요. `set_ttl`, `_remove`, `_resize`에서 목록도 같이 고쳐야 해요.
+  - 상태 변경(R-77): `_probe`와 같이 `TOMBSTONE`으로 통일하는 걸 제안해요. `EMPTY`로 바꾸면 뒤쪽 key의 탐사가 끊겨요(R-60).
+  - 실행 위치(R-80): 서버가 요청을 기다리는 동안에는 코드가 돌지 않아요. `HTTPServer`의 `timeout`과 `handle_request` 반복으로 요청 사이에 청소기를 부르는 방법을 검토해요.
+- **EXPIRE·PERSIST**: 요구사항에 없어요. 추가되면 `_probe` 뒤 `set_ttl`만 부르면 돼요.
+- **영속성 (Phase 6)**: `time.monotonic`은 프로세스가 다시 시작되면 기준이 바뀌어요. 저장한 데이터를 다시 읽을 때 TTL을 이어 가려면 `time.time` 기준 시각이나 R-54의 날짜 형식으로 저장 파일에 쓰는 방법을 검토해요.
