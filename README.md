@@ -238,7 +238,7 @@ except CommandError as e:
 
 세 예외 모두 `MiniRedisError`의 자식이라 한 번에 잡을 수도 있어요.
 
-디버깅 명령어는 `r.info()`, `r.flush()`로 불러요. 목록에 없는 명령어는 `r.execute("명령어", 인자...)`로 보낼 수 있어요.
+디버깅 명령어는 `r.info()`, `r.flush()`로 불러요. 목록에 없는 명령어는 `r.execute(command, *args)`로 보낼 수 있어요. `command`는 명령어 이름 문자열이고, `args`는 배열이 아니라 인자를 하나씩 따로 넘겨요. (예: `r.execute("SET", "hello", "world")`)
 
 ## 테스트
 
