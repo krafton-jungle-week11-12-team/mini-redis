@@ -1,8 +1,9 @@
 """key-value를 저장하는 해시 테이블. 응답 형식은 모르고, 문제가 생기면 예외를 던져요.
 
-설계: docs/design/phase1/hash-table.md
+설계: docs/design/phase1/hash-table.md, docs/design/phase3/atomic-commands.md
 """
 
+import re
 from enum import Enum
 
 INITIAL_CAPACITY = 8          # R-06
@@ -14,9 +15,22 @@ FNV_OFFSET = 14695981039346656037   # 0xcbf29ce484222325
 FNV_PRIME = 1099511628211           # 0x100000001b3
 MASK_64 = 0xFFFFFFFFFFFFFFFF
 
+INT64_MIN = -(1 << 63)              # INCR·DECR 범위. 실제 Redis와 같아요.
+INT64_MAX = (1 << 63) - 1
+# int()는 " 1", "+1", "1_000"도 받아들이고, \d는 "٣" 같은 다른 숫자도 받아서 직접 정해요.
+_INTEGER = re.compile(r"-?[0-9]+")
+
 
 class StoreFullError(Exception):
-    """버킷이 MAX_CAPACITY인데 SET이 적재율 0.75를 넘길 때 던져요."""
+    """적재율 0.75를 지키려면 MAX_CAPACITY보다 커져야 할 때 던져요."""
+
+
+class NotIntegerError(Exception):
+    """INCR·DECR 대상 value가 정수가 아닐 때 던져요."""
+
+
+class IntegerOverflowError(Exception):
+    """INCR·DECR 결과가 64비트 정수 범위를 넘을 때 던져요."""
 
 
 class State(Enum):
@@ -102,24 +116,100 @@ class HashTable:
                 self.buckets[insert_at].fill(b.key, b.value)
                 self.size += 1
 
-    def set(self, key, value):
-        # 넣기 전에 +1로 확인해요. 덮어쓰기도 확인하므로 경계에서는 확장이 한 번 더 일어날 수 있어요. (R-07)
-        if (self.size + self.tombstones + 1) / self.capacity > LOAD_FACTOR_LIMIT:
-            if self.capacity >= MAX_CAPACITY:
-                raise StoreFullError
-            self._resize(self.capacity * 2)
-
-        # 확장 뒤에는 홈 버킷이 바뀌므로 반드시 확장 다음에 탐사해요.
-        found, insert_at = self._probe(key)
-        if found is not None:
-            self.buckets[found].fill(key, value)   # R-14
+    def _ensure_capacity(self, extra):
+        """key를 extra개 새로 넣어도 적재율이 0.75 이하가 되게 확장해요. (R-07)
+        넘으면 아무것도 바꾸지 않고 StoreFullError를 던져요."""
+        if (self.size + self.tombstones + extra) / self.capacity <= LOAD_FACTOR_LIMIT:
             return
+        # 확장하면 TOMBSTONE이 사라져요. MSET은 한 번에 여러 개라 2배로 부족할 수 있어요.
+        new_capacity = self.capacity * 2
+        while (self.size + extra) / new_capacity > LOAD_FACTOR_LIMIT:
+            new_capacity *= 2
+        if new_capacity > MAX_CAPACITY:
+            raise StoreFullError
+        self._resize(new_capacity)
 
+    def _write(self, found, insert_at, key, value):
+        """_probe 결과 자리에 쓰고 size, tombstones를 맞춰요. 확장은 하지 않아요."""
+        if found is not None:
+            self.buckets[found].fill(key, value)   # 덮어쓰기: 개수 변화 없음 (R-14)
+            return
         bucket = self.buckets[insert_at]
         if bucket.state == State.TOMBSTONE:
             self.tombstones -= 1
         bucket.fill(key, value)                    # R-13
         self.size += 1
+
+    def set(self, key, value):
+        # 덮어쓰기도 +1로 확인하므로 경계에서는 확장이 한 번 더 일어날 수 있어요. (R-07)
+        self._ensure_capacity(1)
+        # 확장 뒤에는 홈 버킷이 바뀌므로 반드시 확장 다음에 탐사해요.
+        found, insert_at = self._probe(key)
+        self._write(found, insert_at, key, value)
+
+    def getset(self, key, value):
+        """저장하고 저장 전 value를 돌려줘요. 없었으면 None이에요. (R-39)"""
+        self._ensure_capacity(1)
+        found, insert_at = self._probe(key)
+        old = self.buckets[found].value if found is not None else None
+        self._write(found, insert_at, key, value)
+        return old
+
+    def setnx(self, key, value):
+        """key가 없을 때만 저장해요. 저장했으면 1, 아니면 0이에요. (R-44)"""
+        found, _ = self._probe(key)
+        if found is not None:
+            return 0                               # 실패하면 확장도 하지 않아요
+        self._ensure_capacity(1)
+        _, insert_at = self._probe(key)            # 확장됐을 수 있어서 다시 탐사해요
+        self._write(None, insert_at, key, value)
+        return 1
+
+    def setxx(self, key, value):
+        """key가 있을 때만 덮어써요. 덮어썼으면 1, 아니면 0이에요. (R-45)
+        개수가 늘지 않아서 확장하지 않아요."""
+        found, _ = self._probe(key)
+        if found is None:
+            return 0
+        self.buckets[found].fill(key, value)
+        return 1
+
+    def incr_by(self, key, delta):
+        """저장된 정수에 delta를 더해 저장하고 결과를 정수로 돌려줘요. 없는 key는 0으로 봐요. (R-46 ~ R-48)"""
+        found, _ = self._probe(key)
+        if found is None:
+            current = 0
+        else:
+            value = self.buckets[found].value
+            if not _INTEGER.fullmatch(value):
+                raise NotIntegerError
+            current = int(value)
+            if not INT64_MIN <= current <= INT64_MAX:
+                raise NotIntegerError
+
+        new = current + delta
+        if not INT64_MIN <= new <= INT64_MAX:
+            raise IntegerOverflowError             # 아직 아무것도 바꾸지 않았어요
+
+        if found is not None:
+            self.buckets[found].fill(key, str(new))
+        else:
+            self._ensure_capacity(1)
+            _, insert_at = self._probe(key)
+            self._write(None, insert_at, key, str(new))
+        return new
+
+    def mset(self, pairs):
+        """(key, value) 목록을 전부 저장해요. (R-42)
+        실패할 수 있는 확장 검사를 첫 저장 전에 끝내서, 전부 저장하거나 하나도 저장하지 않아요."""
+        self._ensure_capacity(len(pairs))
+        for key, value in pairs:
+            found, insert_at = self._probe(key)
+            self._write(found, insert_at, key, value)
+
+    def mget(self, keys):
+        """key 순서대로 value 목록을 돌려줘요. 없는 key는 None이에요. (R-43)"""
+        return [self.get(key) for key in keys]
 
     def get(self, key):
         """value를 돌려줘요. 없으면 None이에요. (R-15, R-16)"""
