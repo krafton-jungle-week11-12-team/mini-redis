@@ -1,4 +1,5 @@
-"""해시 테이블(store.py) 테스트. 케이스 ID는 docs/test-cases/phase1/test-cases.md를 따라요.
+"""해시 테이블(store.py) 테스트. 케이스 ID는 docs/test-cases/phase1/test-cases.md와
+phase3/test-cases.md(ENS, WRT, REG)를 따라요.
 
 표기법
 - fill N: key1~keyN을 val1~valN으로 차례로 저장
@@ -9,7 +10,7 @@
 import pytest
 
 from mini_redis import store as store_module
-from mini_redis.store import HashTable, State, fnv1a_64
+from mini_redis.store import MAX_CAPACITY, HashTable, State, StoreFullError, fnv1a_64
 
 
 # ---------------------------------------------------------------------------
@@ -284,3 +285,67 @@ def test_hsh05_matches_fnv1a_64_reference_values():
 @pytest.mark.parametrize("key", ["key1", "key2", "a", "", "가", "가나다", "x" * 99])
 def test_hsh06_index_in_range(key):
     assert 0 <= fnv1a_64(key) % 8 < 8
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 공통 함수. 케이스 ID는 docs/test-cases/phase3/test-cases.md를 따라요.
+# REG-01(SET을 공통 함수로 바꿔도 Phase 1과 같게 동작)은 위의 Phase 1 테스트 전체가 확인해요.
+# ---------------------------------------------------------------------------
+
+def info(table):
+    return {"size": table.size, "capacity": table.capacity, "tombstones": table.tombstones}
+
+
+def test_ens01_no_resize_at_or_below_load_factor(table):
+    table._ensure_capacity(6)                   # 6 / 8 = 0.75
+    assert table.capacity == 8
+
+
+def test_ens02_resize_over_load_factor(table):
+    table._ensure_capacity(7)                   # 7 / 8 > 0.75
+    assert table.capacity == 16
+
+
+def test_ens03_counts_tombstones_and_resize_drops_them(table):
+    fill(table, 6)
+    table.delete("key1")
+    table._ensure_capacity(1)                   # (5 + 1 + 1) / 8 > 0.75
+    assert info(table) == {"size": 5, "capacity": 16, "tombstones": 0}
+
+
+def test_ens04_doubles_until_enough(table):
+    table._ensure_capacity(20)                  # 20 / 16 > 0.75, 20 / 32 <= 0.75
+    assert table.capacity == 32
+
+
+def test_ens05_over_max_capacity_raises_without_change(table):
+    fill(table, 3)
+    with pytest.raises(StoreFullError):
+        table._ensure_capacity(MAX_CAPACITY)
+    assert info(table) == {"size": 3, "capacity": 8, "tombstones": 0}
+
+
+def test_wrt01_write_to_empty_bucket(table, fix_hash):
+    fix_hash["key1"] = 1
+    table._write(None, 1, "key1", "val1")
+    assert table.get("key1") == "val1"
+    assert table.buckets[1].key == "key1"
+    assert info(table) == {"size": 1, "capacity": 8, "tombstones": 0}   # _write는 확장하지 않아요
+
+
+def test_wrt02_overwrite_occupied_bucket(table, fix_hash):
+    fix_hash["key1"] = 1
+    table.set("key1", "val1")
+    table._write(1, 1, "key1", "val2")
+    assert table.get("key1") == "val2"
+    assert table.size == 1
+    assert table.tombstones == 0
+
+
+def test_wrt03_write_to_tombstone_bucket(table, fix_hash):
+    col(table, fix_hash, 2)                     # key1 → 1번, key2 → 2번
+    table.delete("key1")
+    table._write(None, 1, "key1", "val1")
+    assert table.get("key1") == "val1"
+    assert table.size == 2
+    assert table.tombstones == 0

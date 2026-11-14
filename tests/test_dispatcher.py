@@ -1,9 +1,11 @@
-"""입력값 검사 테스트 (VAL). HTTP 없이 dispatcher.execute를 바로 불러요.
-케이스 ID는 docs/test-cases/phase1/test-cases.md를 따라요."""
+"""명령어 테스트. HTTP 없이 dispatcher.execute를 바로 불러요.
+케이스 ID는 docs/test-cases/phase1/test-cases.md(VAL)와
+phase3/test-cases.md(MST, MGT, GTS, SNX, SXX, INC, DEC, ARG)를 따라요."""
 
 import pytest
 
 from mini_redis import dispatcher
+from mini_redis import store as store_module
 from mini_redis.store import HashTable
 
 
@@ -112,3 +114,275 @@ def test_flush_then_set_works():
 
 def test_flush_rejects_args():
     assert_error(dispatcher.execute("FLUSH", ["x"]), 400, "WRONG_ARGS")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 원자적 명령어
+# ---------------------------------------------------------------------------
+
+INT64_MAX = "9223372036854775807"
+INT64_MIN = "-9223372036854775808"
+
+
+def run(command, *args):
+    """성공을 확인하고 result만 돌려줘요."""
+    status, payload = dispatcher.execute(command, list(args))
+    assert status == 200, payload
+    assert payload["ok"] is True
+    return payload["result"]
+
+
+def fill(n):
+    for k in range(1, n + 1):
+        run("SET", f"key{k}", f"val{k}")
+
+
+def info():
+    return run("INFO")
+
+
+# MSET ----------------------------------------------------------------------
+
+def test_mst01_mset_stores_all():
+    assert run("MSET", "key1", "val1", "key2", "val2") == "OK"
+    assert run("GET", "key1") == "val1"
+    assert run("GET", "key2") == "val2"
+
+
+def test_mst02_mset_resizes_once_before_writing():
+    fill(6)
+    run("MSET", "key7", "val7", "key8", "val8", "key9", "val9")
+    assert info() == {"size": 9, "capacity": 16, "tombstones": 0}
+
+
+def test_mst03_mset_odd_args_stores_nothing():
+    assert_error(dispatcher.execute("MSET", ["key1", "val1", "key2"]), 400, "WRONG_ARGS")
+    assert run("DBSIZE") == 0
+
+
+def test_mst04_mset_overwrites_existing_key():
+    run("SET", "key1", "old")
+    run("MSET", "key1", "new", "key2", "val2")
+    assert run("GET", "key1") == "new"
+    assert run("DBSIZE") == 2
+
+
+def test_mst05_mset_same_key_keeps_last_value():
+    run("MSET", "key1", "a", "key1", "b")
+    assert run("GET", "key1") == "b"
+    assert run("DBSIZE") == 1
+
+
+def test_mst06_mset_later_key_too_long_stores_nothing():
+    assert_error(dispatcher.execute("MSET", ["key1", "val1", "k" * 100, "val2"]), 400, "KEY_TOO_LONG")
+    assert run("DBSIZE") == 0
+
+
+def test_mst07_mset_later_value_not_string_stores_nothing():
+    assert_error(dispatcher.execute("MSET", ["key1", "val1", "key2", 123]), 400, "WRONG_TYPE")
+    assert run("DBSIZE") == 0
+
+
+def test_mst08_mset_store_full_stores_nothing(monkeypatch):
+    monkeypatch.setattr(store_module, "MAX_CAPACITY", 8)
+    fill(3)
+    args = ["key4", "val4", "key5", "val5", "key6", "val6", "key7", "val7"]
+    assert_error(dispatcher.execute("MSET", args), 507, "STORE_FULL")   # (3 + 4) / 8 > 0.75
+    assert run("DBSIZE") == 3
+    assert run("GET", "key4") is None
+
+
+def test_mst09_mset_over_20_keys():
+    args = [x for k in range(1, 22) for x in (f"key{k}", f"val{k}")]
+    assert_error(dispatcher.execute("MSET", args), 400, "WRONG_ARGS")
+
+
+# MGET ----------------------------------------------------------------------
+
+def test_mgt01_mget_returns_all():
+    fill(3)
+    assert run("MGET", "key1", "key2", "key3") == ["val1", "val2", "val3"]
+
+
+def test_mgt02_mget_missing_key_is_nil():
+    fill(3)
+    assert run("MGET", "key1", "key2", "key4") == ["val1", "val2", None]
+
+
+def test_mgt03_mget_keeps_order_and_duplicates():
+    fill(2)
+    assert run("MGET", "key2", "key1", "key2") == ["val2", "val1", "val2"]
+
+
+def test_mgt04_mget_over_20_keys():
+    args = [f"key{k}" for k in range(1, 22)]
+    assert_error(dispatcher.execute("MGET", args), 400, "WRONG_ARGS")
+
+
+def test_mgt05_mget_later_key_too_long():
+    assert_error(dispatcher.execute("MGET", ["key1", "k" * 100]), 400, "KEY_TOO_LONG")
+
+
+# GETSET --------------------------------------------------------------------
+
+def test_gts01_getset_missing_key_returns_nil_and_stores():
+    assert run("GETSET", "key1", "val1") is None
+    assert run("GET", "key1") == "val1"
+
+
+def test_gts02_getset_returns_old_value():
+    run("SET", "key1", "0")
+    assert run("GETSET", "key1", "1") == "0"
+    assert run("GET", "key1") == "1"
+
+
+def test_gts03_getset_resizes_at_boundary():
+    fill(6)
+    assert run("GETSET", "key7", "val7") is None
+    assert info()["capacity"] == 16
+
+
+# SETNX ---------------------------------------------------------------------
+
+def test_snx01_setnx_missing_key_stores():
+    assert run("SETNX", "key1", "val1") == 1
+    assert run("GET", "key1") == "val1"
+
+
+def test_snx02_setnx_existing_key_does_nothing():
+    run("SET", "key1", "val1")
+    assert run("SETNX", "key1", "val2") == 0
+    assert run("GET", "key1") == "val1"
+
+
+def test_snx03_setnx_fail_does_not_resize():
+    fill(6)
+    assert run("SETNX", "key6", "x") == 0
+    assert info()["capacity"] == 8               # 같은 상황에서 SET은 확장해요 (EXP-03)
+
+
+def test_snx04_setnx_new_key_resizes_then_stores():
+    fill(6)
+    assert run("SETNX", "key7", "val7") == 1
+    assert run("GET", "key7") == "val7"
+    assert info()["capacity"] == 16
+
+
+# SETXX ---------------------------------------------------------------------
+
+def test_sxx01_setxx_missing_key_does_nothing():
+    assert run("SETXX", "key1", "val1") == 0
+    assert run("GET", "key1") is None
+    assert run("DBSIZE") == 0
+
+
+def test_sxx02_setxx_existing_key_overwrites():
+    run("SET", "key1", "val1")
+    assert run("SETXX", "key1", "val2") == 1
+    assert run("GET", "key1") == "val2"
+
+
+def test_sxx03_setxx_does_not_resize_at_boundary():
+    fill(6)
+    assert run("SETXX", "key6", "new") == 1
+    assert info()["capacity"] == 8
+
+
+# INCR ----------------------------------------------------------------------
+
+def test_inc01_incr_adds_one():
+    run("SET", "key1", "1")
+    assert run("INCR", "key1") == 2              # 응답은 정수
+    assert run("GET", "key1") == "2"             # 저장은 문자열
+
+
+def test_inc02_incr_missing_key_starts_at_zero():
+    assert run("INCR", "key1") == 1
+    assert run("GET", "key1") == "1"
+
+
+def test_inc03_incr_negative():
+    run("SET", "key1", "-5")
+    assert run("INCR", "key1") == -4
+
+
+def test_inc04_incr_not_integer_keeps_value():
+    run("SET", "key1", "string")
+    assert_error(dispatcher.execute("INCR", ["key1"]), 400, "NOT_INTEGER")
+    assert run("GET", "key1") == "string"
+
+
+@pytest.mark.parametrize("value", [" 1", "+1", "1_000", "1\n", "1.5", ""])
+def test_inc05_incr_rejects_non_integer_format(value):
+    run("SET", "key1", value)
+    assert_error(dispatcher.execute("INCR", ["key1"]), 400, "NOT_INTEGER")
+
+
+def test_inc06_incr_overflow_keeps_value():
+    run("SET", "key1", INT64_MAX)
+    assert_error(dispatcher.execute("INCR", ["key1"]), 400, "INTEGER_OVERFLOW")
+    assert run("GET", "key1") == INT64_MAX
+
+
+def test_inc07_incr_stored_value_out_of_range():
+    run("SET", "key1", "9223372036854775808")    # INT64_MAX + 1
+    assert_error(dispatcher.execute("INCR", ["key1"]), 400, "NOT_INTEGER")
+
+
+def test_inc08_incr_new_key_resizes_at_boundary():
+    fill(6)
+    assert run("INCR", "counter") == 1
+    assert info()["capacity"] == 16
+
+
+def test_inc09_incr_existing_key_does_not_resize():
+    fill(5)
+    run("SET", "num", "1")
+    assert run("INCR", "num") == 2
+    assert info()["capacity"] == 8               # 같은 상황에서 SET은 확장해요 (EXP-03)
+
+
+# DECR ----------------------------------------------------------------------
+
+def test_dec01_decr_subtracts_one():
+    run("SET", "key1", "1")
+    assert run("DECR", "key1") == 0
+    assert run("GET", "key1") == "0"
+
+
+def test_dec02_decr_missing_key_starts_at_zero():
+    assert run("DECR", "key1") == -1
+
+
+def test_dec03_decr_not_integer():
+    run("SET", "key1", "string")
+    assert_error(dispatcher.execute("DECR", ["key1"]), 400, "NOT_INTEGER")
+
+
+def test_dec04_decr_overflow():
+    run("SET", "key1", INT64_MIN)
+    assert_error(dispatcher.execute("DECR", ["key1"]), 400, "INTEGER_OVERFLOW")
+
+
+# 인자 검사 -----------------------------------------------------------------
+
+@pytest.mark.parametrize("command, args", [
+    ("GETSET", ["key1"]),
+    ("SETNX", ["key1"]),
+    ("SETXX", ["key1"]),
+    ("INCR", []),
+    ("DECR", ["key1", "key2"]),
+    ("MSET", []),
+    ("MGET", []),
+])
+def test_arg01_wrong_arg_count(command, args):
+    assert_error(dispatcher.execute(command, args), 400, "WRONG_ARGS")
+
+
+@pytest.mark.parametrize("command, args", [
+    ("GETSET", ["key1", 123]),
+    ("SETNX", ["key1", None]),
+    ("SETXX", [123, "val1"]),
+])
+def test_arg02_non_string_arg(command, args):
+    assert_error(dispatcher.execute(command, args), 400, "WRONG_TYPE")

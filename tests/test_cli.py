@@ -1,5 +1,5 @@
 """CLI 테스트 (CMD). 서버 없이 함수만 불러요.
-케이스 ID는 docs/test-cases/phase2/test-cases.md를 따라요."""
+케이스 ID는 docs/test-cases/phase2/test-cases.md와 phase3/test-cases.md(CMD-06)를 따라요."""
 
 import pytest
 
@@ -40,3 +40,7 @@ def test_cmd03_error_then_continue_then_exit():
     assert out[0].startswith("(error) WRONG_ARGS")
     assert out[1] == '"PONG"'
     assert len(out) == 2                # exit 뒤에는 아무것도 출력하지 않고 끝나요
+
+
+def test_cmd06_format_list_result_with_numbers():
+    assert format_result(["1", None]) == '1) "1"\n2) (nil)'
