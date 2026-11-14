@@ -64,3 +64,20 @@ def test_val13_key_length_counted_in_bytes_allowed():
     status, payload = dispatcher.execute("SET", [key, "val1"])
     assert status == 200
     assert payload["result"] == "OK"
+
+
+def test_info_reports_store_stats():
+    dispatcher.execute("SET", ["a", "1"])
+    dispatcher.execute("SET", ["b", "2"])
+    dispatcher.execute("DEL", ["a"])
+    status, payload = dispatcher.execute("INFO", [])
+    assert status == 200
+    assert payload["result"] == {
+        "size": 1,
+        "capacity": dispatcher.store.capacity,
+        "tombstones": 1,
+    }
+
+
+def test_info_rejects_args():
+    assert_error(dispatcher.execute("INFO", ["x"]), 400, "WRONG_ARGS")

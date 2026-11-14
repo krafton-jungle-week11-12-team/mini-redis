@@ -38,6 +38,10 @@ def cmd_dbsize(args):
     return ok_response(store.size)
 
 
+def cmd_info(args):
+    return ok_response({"size": store.size, "capacity": store.capacity, "tombstones": store.tombstones})
+
+
 # 명령어 테이블: 이름 -> (함수, 인자 개수)
 COMMANDS = {
     "PING": (cmd_ping, 0),
@@ -46,6 +50,7 @@ COMMANDS = {
     "DEL": (cmd_del, 1),
     "EXISTS": (cmd_exists, 1),
     "DBSIZE": (cmd_dbsize, 0),
+    "INFO": (cmd_info, 0),
 }
 
 
