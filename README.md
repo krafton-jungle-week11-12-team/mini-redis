@@ -167,6 +167,62 @@ curl -X POST http://<서버 IP>:6380/command -d '{"command": "FLUSH", "args": []
 
 macOS 터미널에서 응답 끝에 붙는 `%`는 줄바꿈이 없다는 표시예요. 응답의 일부가 아니에요.
 
+## 7. CLI로 쓰기
+
+curl 대신 짧은 명령어로 쓸 수 있어요. 이 저장소 코드가 있는 PC에서 실행해요. CLI는 쓰는 동안만 실행하면 되지만, 접속할 **서버는 켜져 있어야 해요**.
+
+```bash
+python -m mini_redis.cli --host <서버 IP>     # --port를 빼면 6380
+```
+
+- CLI의 `--host`는 **접속할 서버의 IP**예요. 이 명령어로 내 서버가 다른 사람에게 열리지는 않아요.
+- 다른 사람이 내 서버를 쓰게 하려면 서버를 `python -m mini_redis --host 0.0.0.0`으로 켜요. ([1. 서버 여는 사람](#1-서버-여는-사람) 참고)
+- 내 PC에서 혼자 쓸 때는 한 터미널에서 `python -m mini_redis`로 서버를 켜고, 다른 터미널에서 `--host` 없이 `python -m mini_redis.cli`를 실행해요.
+
+```
+mini-redis> SET msg "hello world"
+"OK"
+mini-redis> GET msg
+"hello world"
+mini-redis> GET nothing
+(nil)
+mini-redis> EXISTS msg
+(integer) 1
+mini-redis> GET
+(error) WRONG_ARGS GET은 인자 1개가 필요해요
+mini-redis> exit
+```
+
+- 공백이 들어간 값은 따옴표로 감싸요.
+- 오류가 나도 CLI는 끝나지 않아요. `exit`, `quit`, Ctrl+C, Ctrl+D로 끝내요.
+
+## 8. Python 코드에서 쓰기
+
+웹 서버 같은 Python 코드에서 쓸 때는 클라이언트를 `import`해요. 표준 라이브러리만 써서 따로 설치할 패키지가 없어요.
+
+```python
+from mini_redis.client import MiniRedis, CommandError
+
+r = MiniRedis("<서버 IP>", 6380, timeout=5.0)   # timeout은 초 단위, 기본 5초
+r.set("hello", "world")   # "OK"
+r.get("hello")            # "world", 없으면 None
+r.delete("hello")         # 1 (del은 Python 예약어라 delete예요)
+r.info()                  # {"size": 0, "capacity": 8, "tombstones": 1}
+
+try:
+    r.set("k" * 100, "v")
+except CommandError as e:
+    print(e.code)         # "KEY_TOO_LONG"
+```
+
+| 예외 | 언제 |
+| --- | --- |
+| `CommandError` | 서버가 오류 응답을 줬을 때. `code`, `message`, `status`가 담겨요 |
+| `ServerUnavailableError` | 서버가 꺼져 있거나 주소가 틀렸을 때 |
+| `RequestTimeoutError` | 제한 시간 안에 응답이 없을 때 |
+
+세 예외 모두 `MiniRedisError`의 자식이라 한 번에 잡을 수도 있어요.
+
 ## 테스트
 
 가상환경을 활성화하고 패키지를 설치한 상태에서 실행해요([가상환경 만들기](#가상환경-만들기) 참고).
