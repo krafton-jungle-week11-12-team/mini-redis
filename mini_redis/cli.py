@@ -9,6 +9,12 @@ import argparse
 import json
 import shlex
 
+try:
+    # import만 해도 input()에서 ↑↓ 키로 이전 입력을 불러오고, ←→ 키로 커서를 옮길 수 있어요.
+    import readline  # noqa: F401
+except ImportError:
+    pass  # Windows에는 readline이 없어요. 없어도 CLI는 그대로 동작해요.
+
 from mini_redis.client import CommandError, MiniRedis, MiniRedisError
 
 PROMPT = "mini-redis> "
