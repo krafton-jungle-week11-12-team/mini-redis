@@ -97,6 +97,8 @@ curl http://<서버 IP>:6380/health
 - `command`: 실행할 명령어 이름이에요. 문자열로 입력해요. 대소문자는 구분하지 않아요. (예: `"SET"`)
 - `args`: 명령어에 넘길 인자 목록이에요. 문자열 배열로 입력하고, 생략하면 빈 배열로 처리해요. (예: `["key", "value"]`)
 
+### 기본 명령어
+
 | 명령어 | args | 결과 |
 | --- | --- | --- |
 | `PING` | `[]` | `"PONG"` |
@@ -105,6 +107,13 @@ curl http://<서버 IP>:6380/health
 | `DEL` | `["key"]` | 지웠으면 `1`, 없으면 `0` |
 | `EXISTS` | `["key"]` | 있으면 `1`, 없으면 `0` |
 | `DBSIZE` | `[]` | 저장된 key 개수 |
+
+### 디버깅 명령어
+
+해시 테이블 상태를 확인하거나 테스트 중에 저장소를 비울 때 써요.
+
+| 명령어 | args | 결과 |
+| --- | --- | --- |
 | `INFO` | `[]` | 저장소 상태 `{"size", "capacity", "tombstones"}` |
 | `FLUSH` | `[]` | 모든 데이터를 지우고 지운 개수를 돌려줘요. 버킷 수도 처음(8개)으로 돌아가요 |
 
@@ -113,6 +122,10 @@ curl http://<서버 IP>:6380/health
 - `size`: 저장된 key 개수예요. `DBSIZE`와 같아요.
 - `capacity`: 해시 테이블의 버킷 수예요. 처음엔 8이고, 가득 차기 전에 늘어나요.
 - `tombstones`: `DEL`로 지운 뒤 남아 있는 삭제 표시 버킷 수예요. 테이블이 커지면 0으로 정리돼요.
+
+> ⚠️ `FLUSH`는 서버의 모든 데이터를 지워요. 같은 서버를 쓰는 다른 사람의 데이터도 지워지니, 쓰기 전에 알려 주세요.
+
+### 응답과 오류
 
 응답은 모두 `{ok, result, error}` 형식이고, 실패하면 `error`에 `code`와 `message`가 담겨요.
 
@@ -145,6 +158,7 @@ curl -X POST http://<서버 IP>:6380/command -d '{"command": "DEL", "args": ["he
 curl -X POST http://<서버 IP>:6380/command -d '{"command": "DBSIZE", "args": []}'
 # {"ok": true, "result": 0, "error": null}
 
+# 디버깅 명령어
 curl -X POST http://<서버 IP>:6380/command -d '{"command": "INFO", "args": []}'
 # {"ok": true, "result": {"size": 0, "capacity": 8, "tombstones": 1}, "error": null}
 
@@ -207,7 +221,8 @@ r = MiniRedis("<서버 IP>", 6380, timeout=5.0)   # timeout은 초 단위, 기�
 r.set("hello", "world")   # "OK"
 r.get("hello")            # "world", 없으면 None
 r.delete("hello")         # 1 (del은 Python 예약어라 delete예요)
-r.info()                  # {"size": 0, "capacity": 8, "tombstones": 1}
+r.exists("hello")         # 0
+r.dbsize()                # 0
 
 try:
     r.set("k" * 100, "v")
@@ -222,6 +237,8 @@ except CommandError as e:
 | `RequestTimeoutError` | 제한 시간 안에 응답이 없을 때 |
 
 세 예외 모두 `MiniRedisError`의 자식이라 한 번에 잡을 수도 있어요.
+
+디버깅 명령어는 `r.info()`, `r.flush()`로 불러요. 목록에 없는 명령어는 `r.execute("명령어", 인자...)`로 보낼 수 있어요.
 
 ## 테스트
 
