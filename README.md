@@ -124,6 +124,19 @@ curl http://<서버 IP>:6380/health
 
 `INCR`·`DECR`은 결과를 문자열로 저장해서 `GET`하면 `"11"`처럼 나와요. 다룰 수 있는 범위는 -2^63 ~ 2^63-1이에요.
 
+### 만료(TTL)
+
+`SET`의 세 번째 인자로 보관 기간(초)을 주면 그 시간이 지난 뒤 key가 없어져요.
+
+| 명령어 | args | 결과 |
+| --- | --- | --- |
+| `SET` | `["key", "value", "30"]` | `"OK"`. 30초 뒤 만료돼요. TTL은 `"1"` ~ `"1728000"`(20일) 사이의 정수 문자열이에요 |
+| `TTL` | `["key"]` | 남은 시간(초, 올림). 만료가 없으면 `-1`, 없거나 만료된 key면 `-2` |
+
+- 만료된 key는 모든 명령어에서 없는 key로 보여요.
+- `SET`(TTL 없이), `GETSET`, `SETXX`, `MSET`으로 값을 덮어쓰면 TTL이 지워져요. `INCR`·`DECR`은 TTL을 유지해요.
+- 만료된 key는 다음에 조회될 때 지워져요. 그래서 아무도 조회하지 않은 만료 key는 `DBSIZE`에 잠시 포함될 수 있어요.
+
 ### 디버깅 명령어
 
 해시 테이블 상태를 확인하거나 테스트 중에 저장소를 비울 때 써요.
@@ -137,7 +150,7 @@ curl http://<서버 IP>:6380/health
 
 - `size`: 저장된 key 개수예요. `DBSIZE`와 같아요.
 - `capacity`: 해시 테이블의 버킷 수예요. 처음엔 8이고, 가득 차기 전에 늘어나요.
-- `tombstones`: `DEL`로 지운 뒤 남아 있는 삭제 표시 버킷 수예요. 테이블이 커지면 0으로 정리돼요.
+- `tombstones`: `DEL`이나 만료로 지운 뒤 남아 있는 삭제 표시 버킷 수예요. 테이블이 커지거나 같은 크기로 청소되면 0으로 정리돼요.
 
 > ⚠️ `FLUSH`는 서버의 모든 데이터를 지워요. 같은 서버를 쓰는 다른 사람의 데이터도 지워지니, 쓰기 전에 알려 주세요.
 
@@ -154,6 +167,7 @@ curl http://<서버 IP>:6380/health
 | `KEY_TOO_LONG` | 400 | key의 UTF-8 길이가 99byte를 넘을 때 |
 | `NOT_INTEGER` | 400 | `INCR`·`DECR` 대상 value가 정수가 아닐 때 |
 | `INTEGER_OVERFLOW` | 400 | `INCR`·`DECR` 결과가 64비트 정수 범위를 넘을 때 |
+| `INVALID_TTL` | 400 | `SET`의 세 번째 인자가 1 ~ 1728000 사이의 정수 문자열이 아닐 때 |
 | `VALUE_TOO_LARGE` | 413 | 요청 본문이 1MB를 넘을 때 |
 | `NOT_FOUND` | 404 | `/command`, `/health`가 아닌 경로일 때 |
 | `STORE_FULL` | 507 | 저장소가 최대 크기에 도달해 더 저장할 수 없을 때 |
@@ -185,6 +199,13 @@ curl -X POST http://<서버 IP>:6380/command -d '{"command": "MSET", "args": ["a
 
 curl -X POST http://<서버 IP>:6380/command -d '{"command": "MGET", "args": ["a", "b", "c"]}'
 # {"ok": true, "result": ["1", "2", null], "error": null}
+
+# 만료(TTL)
+curl -X POST http://<서버 IP>:6380/command -d '{"command": "SET", "args": ["session", "abc", "30"]}'
+# {"ok": true, "result": "OK", "error": null}   ← 30초 뒤 만료
+
+curl -X POST http://<서버 IP>:6380/command -d '{"command": "TTL", "args": ["session"]}'
+# {"ok": true, "result": 30, "error": null}
 
 # 디버깅 명령어
 curl -X POST http://<서버 IP>:6380/command -d '{"command": "INFO", "args": []}'
@@ -257,6 +278,9 @@ r.incr("views")                   # 1
 r.mset({"a": "1", "b": "2"})      # "OK"
 r.mget("a", "b", "c")             # ["1", "2", None]
 r.setnx("a", "x")                 # 0 (이미 있어서 저장 안 함)
+
+r.set("session", "abc", ttl=30)   # "OK", 30초 뒤 만료
+r.ttl("session")                  # 30, 만료 없음 -1, 없는 key -2
 
 try:
     r.set("k" * 100, "v")
